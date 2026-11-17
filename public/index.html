@@ -5,29 +5,29 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Zero Lux · The agent factory that runs in the dark</title>
 <meta name="description" content="Write the job. The line builds an AI agent to do it. An agent factory on Robinhood Chain, in build.">
-<meta name="theme-color" content="#05021A">
+<meta name="theme-color" content="#FDF6EE">
 <meta property="og:title" content="Zero Lux · The agent factory that runs in the dark">
 <meta property="og:description" content="Write the job. The line builds an AI agent to do it. In build on Robinhood Chain.">
 <meta property="og:image" content="https://zerolux.fun/media/share-2.jpg">
 <meta property="og:url" content="https://zerolux.fun/">
 <meta property="og:type" content="website">
 <meta name="twitter:card" content="summary_large_image">
-<link rel="icon" href="/icon-64.png" type="image/png">
-<link rel="apple-touch-icon" href="/icon-180.png">
+<link rel="icon" href="/favicon-64.png" type="image/png">
+<link rel="apple-touch-icon" href="/touch-180.png">
 <link rel="preload" href="/fonts/archivo-var.woff2" as="font" type="font/woff2" crossorigin>
 <style>
 @font-face{font-family:"Archivo";src:url(/fonts/archivo-var.woff2) format("woff2");font-weight:400 900;font-stretch:62% 125%;font-display:swap}
 @font-face{font-family:"JetBrains Mono";src:url(/fonts/jetbrains-mono-var.woff2) format("woff2");font-weight:400 700;font-display:swap}
 :root{
   --paper:#F3F1EA;--panel:#FFFFFF;--ink:#0E0C14;--rule:#D9D5C8;--mute:#6A6676;
-  --void:#05021A;--cold:#150A4A;--violet:#5B1A9E;--magenta:#C2185B;--hot:#FF4B1F;--amber:#FFB000;--white-hot:#FFF3C4;
+  --void:#05021A;--dawn:#FDF6EE;--cold:#150A4A;--violet:#5B1A9E;--magenta:#C2185B;--hot:#FF4B1F;--amber:#FFB000;--white-hot:#FFF3C4;
   --edge:clamp(16px,2.6vw,40px);
   --hh:max(100svh,560px);
   --w:max(100vw,calc(var(--hh) * 1.7684));--h:calc(var(--w) / 1.7684);
-  --fx:.5;--fy:.5;
+  --fx:.52;--fy:.4;
 }
-@media (max-aspect-ratio:3/2){:root{--fx:.34}}
-@media (max-aspect-ratio:1/1){:root{--fx:.21}}
+@media (max-aspect-ratio:3/2){:root{--fx:.56}}
+@media (max-aspect-ratio:1/1){:root{--w:calc(var(--hh) * 1.22);--fx:.425}}
 *{box-sizing:border-box;margin:0;padding:0}
 html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
 body{background:var(--paper);color:var(--ink);font-family:"Archivo",system-ui,sans-serif;font-size:17px;line-height:1.5;-webkit-font-smoothing:antialiased;overflow-x:hidden}
@@ -37,8 +37,8 @@ img{display:block;max-width:100%}
 .lbl{font-family:"JetBrains Mono",ui-monospace,Menlo,monospace;font-size:12px;letter-spacing:.14em;text-transform:uppercase}
 
 /* nav */
-.nav{position:fixed;z-index:20;inset:0 0 auto 0;display:flex;align-items:center;justify-content:space-between;padding:14px var(--edge);color:var(--paper);transition:background .3s,backdrop-filter .3s,border-color .3s;border-bottom:1px solid transparent}
-.nav.solid{background:rgba(5,2,26,.72);backdrop-filter:blur(14px) saturate(1.4);-webkit-backdrop-filter:blur(14px) saturate(1.4);border-color:rgba(243,241,234,.12)}
+.nav{position:fixed;z-index:20;inset:0 0 auto 0;display:flex;align-items:center;justify-content:space-between;padding:14px var(--edge);color:var(--ink);transition:background .3s,backdrop-filter .3s,border-color .3s;border-bottom:1px solid transparent}
+.nav.solid{background:rgba(253,246,238,.8);backdrop-filter:blur(14px) saturate(1.4);-webkit-backdrop-filter:blur(14px) saturate(1.4);border-color:rgba(14,12,20,.1)}
 .brand{display:flex;align-items:center;gap:10px;font-stretch:125%;font-weight:900;font-size:17px;letter-spacing:-.02em;text-transform:uppercase}
 .brand .m{width:34px;height:34px;border-radius:8px;display:block}
 .links{position:absolute;left:50%;transform:translateX(-50%);display:flex;gap:clamp(18px,2.4vw,36px)}
@@ -47,42 +47,46 @@ img{display:block;max-width:100%}
 .pill{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:0 20px;border-radius:999px;font-weight:650;font-size:15px;letter-spacing:-.01em;border:0;cursor:pointer;font-family:inherit;transition:transform .2s,background .2s,box-shadow .2s}
 .pill.hot{background:var(--hot);color:var(--ink)}
 .pill.hot:hover{background:#ff6a3d;box-shadow:0 0 0 6px rgba(255,75,31,.18)}
-.pill.ghost{background:rgba(243,241,234,.1);color:var(--paper);box-shadow:inset 0 0 0 1px rgba(243,241,234,.35)}
-.pill.ghost:hover{background:rgba(243,241,234,.18)}
+.pill.ghost{background:rgba(14,12,20,.05);color:var(--ink);box-shadow:inset 0 0 0 1px rgba(14,12,20,.3)}
+.pill.ghost:hover{background:rgba(14,12,20,.1)}
 .pill.ink{background:var(--ink);color:var(--paper)}
 @media (max-width:760px){.links{display:none}}
 
 /* hero */
-.hero{position:relative;height:var(--hh);overflow:hidden;background:var(--void);color:var(--paper);isolation:isolate}
+.hero{position:relative;height:var(--hh);overflow:hidden;background:var(--dawn);color:var(--ink);isolation:isolate}
 .stage{position:absolute;width:var(--w);height:var(--h);
   left:clamp(calc(100vw - var(--w)),calc(50vw - var(--w) * var(--fx)),0px);
   top:clamp(calc(var(--hh) - var(--h)),calc(var(--hh) * .5 - var(--h) * var(--fy)),0px)}
 .stage img{width:100%;height:auto}
 .plate{z-index:1}.fg{z-index:3;pointer-events:none}
-.plate img{filter:brightness(.5) saturate(.8);transition:filter 1.6s cubic-bezier(.2,.7,.2,1)}
 .fg img{opacity:0;transition:opacity 1.2s .2s}
-.lit .plate img{filter:none}.lit .fg img{opacity:1}
+.lit .fg img{opacity:1}
+@media (max-aspect-ratio:1/1){.stage{top:7svh}.stage img{-webkit-mask-image:linear-gradient(#000 69%,transparent 80%);mask-image:linear-gradient(#000 69%,transparent 80%)}}
 .word{position:absolute;z-index:2;left:50%;top:clamp(78px,14svh,170px);--dx:0px;--dy:0px;
   transform:translate(calc(-50% + var(--dx)),var(--dy));
   font-stretch:125%;font-weight:900;font-size:min(13.4vw,34svh);line-height:.8;letter-spacing:-.04em;text-transform:uppercase;white-space:nowrap;
-  color:var(--paper);text-shadow:0 0 60px rgba(123,60,255,.35);
+  color:var(--ink);
   opacity:0;transition:opacity 1.4s .35s}
 .lit .word{opacity:1}
 .word br{display:none}
 @media (max-aspect-ratio:1/1){.word{font-size:min(27vw,17svh);top:clamp(84px,13svh,150px);white-space:normal;text-align:center}.word br{display:inline}}
-.scrim{position:absolute;z-index:4;inset:auto 0 0 0;height:66%;background:linear-gradient(to top,rgba(5,2,26,.95) 0%,rgba(5,2,26,.84) 46%,rgba(5,2,26,.4) 76%,rgba(5,2,26,0) 100%);pointer-events:none}
-@media (min-aspect-ratio:1/1){.scrim{inset:auto 0 0 auto;width:min(980px,70%);height:70%;background:radial-gradient(ellipse at 100% 100%,rgba(5,2,26,.9) 0%,rgba(5,2,26,.6) 42%,rgba(5,2,26,0) 72%)}}
+.scrim{position:absolute;z-index:4;inset:auto 0 0 0;height:52%;background:linear-gradient(to top,rgba(253,246,238,.97) 0%,rgba(253,246,238,.92) 58%,rgba(253,246,238,0) 100%);pointer-events:none}
+@media (min-aspect-ratio:1/1){.scrim{inset:auto 0 0 auto;width:min(980px,70%);height:70%;background:radial-gradient(ellipse at 100% 100%,rgba(253,246,238,.94) 0%,rgba(253,246,238,.7) 42%,rgba(253,246,238,0) 72%)}}
 .pitch{position:absolute;z-index:5;right:var(--edge);bottom:clamp(24px,6svh,70px);width:min(540px,calc(100% - var(--edge) * 2))}
 @media (max-aspect-ratio:1/1){.pitch{left:var(--edge);right:var(--edge);width:auto}}
-.pitch .lbl{display:flex;flex-wrap:wrap;gap:6px 14px;color:rgba(243,241,234,.78);margin-bottom:14px}
-.pitch .lbl b{color:var(--amber);font-weight:500}
+.pitch .lbl{display:flex;flex-wrap:wrap;gap:6px 14px;color:var(--mute);margin-bottom:14px}
+.pitch .lbl b{color:var(--magenta);font-weight:500}
 h1{font-weight:650;font-stretch:104%;font-size:clamp(28px,min(3.3vw,5.4svh),50px);line-height:1.04;letter-spacing:-.03em;text-wrap:balance}
-.pitch p.sub{margin-top:12px;font-size:clamp(15px,1.15vw,18px);line-height:1.45;color:rgba(243,241,234,.84);max-width:46ch}
+.pitch p.sub{margin-top:12px;font-size:clamp(15px,1.15vw,18px);line-height:1.45;color:rgba(14,12,20,.76);max-width:46ch}
 form.join{margin-top:20px;display:flex;gap:8px;padding:6px;border-radius:999px;background:rgba(243,241,234,.1);box-shadow:inset 0 0 0 1px rgba(243,241,234,.3);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
 form.join input{flex:1;min-width:0;background:none;border:0;outline:0;color:inherit;font:500 16px "Archivo",sans-serif;padding:0 14px;min-height:44px}
 form.join input::placeholder{color:currentColor;opacity:.55}
 form.join:focus-within{box-shadow:inset 0 0 0 1.5px var(--amber)}
 form.join.done{box-shadow:inset 0 0 0 1.5px #12B76A}
+.hero form.join{background:rgba(255,255,255,.72);box-shadow:inset 0 0 0 1px rgba(14,12,20,.22)}
+.hero form.join:focus-within{box-shadow:inset 0 0 0 1.5px var(--hot)}
+.hero form.join.done{box-shadow:inset 0 0 0 1.5px #12B76A}
+.hero .note{color:var(--mute)}
 form.join button:disabled{opacity:.6;cursor:default}
 .note{margin-top:10px;font-family:"JetBrains Mono",monospace;font-size:12px;letter-spacing:.04em;color:rgba(243,241,234,.66)}
 .read{position:absolute;z-index:5;left:var(--edge);bottom:clamp(24px,6svh,70px);display:grid;gap:8px;color:rgba(243,241,234,.86);padding:14px 16px;border-radius:14px;background:rgba(5,2,26,.62);box-shadow:inset 0 0 0 1px rgba(243,241,234,.16);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
@@ -155,22 +159,17 @@ footer .lbl{font-size:11px}
 </head>
 <body>
 <header class="nav">
-  <a class="brand" href="/" aria-label="Zero Lux home"><img class="m" src="/media/mark-136.webp" width="34" height="34" alt="">Zero Lux</a>
+  <a class="brand" href="/" aria-label="Zero Lux home"><img class="m" src="/media/mark-c.webp" width="34" height="34" alt="">Zero Lux</a>
   <nav class="links" aria-label="Sections"><a href="#line">How it works</a><a href="#readings">Readings</a><a href="#lux">$LUX</a></nav>
   <a class="pill ghost" href="#join">Join the list</a>
 </header>
 
 <main>
 <div class="hero">
-  <div class="stage plate"><img src="/media/line-2688.webp" srcset="/media/line-1600.webp 1600w, /media/line-2688.webp 2688w, /media/line-5120.webp 5120w" sizes="max(100vw, 177svh)" alt="A robot assembly line in a dark factory, seen by a thermal camera. Units on the belt run from cold violet to white-hot." fetchpriority="high"></div>
+  <div class="stage plate"><img src="/media/hero-2688.webp" srcset="/media/hero-1600.webp 1600w, /media/hero-2688.webp 2688w" sizes="max(100vw, 177svh)" alt="Violet blocks ride a conveyor, lift off and join a floating ring shaped like a zero, turning from violet through magenta and orange to one white-hot block." fetchpriority="high"></div>
   <div class="word" aria-hidden="true">Zero <br>Lux</div>
-  <div class="stage fg" aria-hidden="true"><img src="/media/line-fg-2688.webp" srcset="/media/line-fg-1600.webp 1600w, /media/line-fg-2688.webp 2688w, /media/line-fg-5120.webp 5120w" sizes="max(100vw, 177svh)" alt=""></div>
+  <div class="stage fg" aria-hidden="true"><img src="/media/hero-fg-2688.webp" srcset="/media/hero-fg-1600.webp 1600w, /media/hero-fg-2688.webp 2688w" sizes="max(100vw, 177svh)" alt=""></div>
   <div class="scrim"></div>
-  <div class="read lbl" aria-hidden="true">
-    <span><i class="led"></i>Line A <b>in build</b></span>
-    <span>Ambient light <b>0.00 lx</b></span>
-    <span>Humans on shift <b>0</b></span>
-  </div>
   <div class="pitch">
     <div class="lbl"><span>Agent factory</span><span>Robinhood Chain</span><b>In build</b></div>
     <h1>The agent factory that runs in the dark.</h1>
