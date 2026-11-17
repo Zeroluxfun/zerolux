@@ -37,7 +37,7 @@ async function waitlist(request, env) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (url.hostname === 'www.' + HOST) { url.hostname = HOST; return Response.redirect(url.toString(), 301); }
+    if (url.hostname === 'www.' + HOST || (url.protocol === 'http:' && url.hostname === HOST)) { url.hostname = HOST; url.protocol = 'https:'; return Response.redirect(url.toString(), 301); }
     const blocked = gate(request, env, url);
     if (blocked) return blocked;
     const p = url.pathname;
