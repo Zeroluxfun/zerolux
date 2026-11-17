@@ -32,6 +32,15 @@
     });
   }
 
+  // Glass panels: the highlight follows the pointer.
+  if (matchMedia('(pointer: fine)').matches) {
+    document.querySelectorAll('.glass').forEach((el) => el.addEventListener('pointermove', (e) => {
+      const r = el.getBoundingClientRect();
+      el.style.setProperty('--gx', (e.clientX - r.left) + 'px');
+      el.style.setProperty('--gy', (e.clientY - r.top) + 'px');
+    }));
+  }
+
   document.querySelectorAll('form.join').forEach((form) => {
     const input = form.querySelector('input');
     const button = form.querySelector('button');
