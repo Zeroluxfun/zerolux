@@ -84,7 +84,7 @@ export async function card(env, hash) {
     type: 'https://eips.ethereum.org/EIPS/eip-8004#registration-v1',
     name: spec.name,
     description: spec.tagline || spec.job,
-    image: 'https://zerolux.fun/media/lux-token-2.png',
+    image: 'https://zerolux.fun/media/lux-token-3.png',
     services: [
       { name: 'web', endpoint: `https://zerolux.fun/a/${a.id}` },
       { name: 'x402', endpoint: `https://zerolux.fun/a/${a.id}/run`, version: '1' },

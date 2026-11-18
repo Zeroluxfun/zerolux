@@ -110,7 +110,7 @@ export class Signer extends DurableObject {
     try {
       hash = await wal.sendTransaction({ to, data, gas: (gas * 13n) / 10n });
     } catch (e) {
-      return { ok: false, stage: 'rpc', error: why(e) };
+      return { ok: false, stage: 'send', error: why(e) }; // it may or may not have gone out
     }
     try {
       const r = await pub.waitForTransactionReceipt({ hash, pollingInterval: 700, timeout: 45_000 });

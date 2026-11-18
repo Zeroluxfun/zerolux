@@ -154,6 +154,8 @@ async function pageAgent() {
       await new Promise((s) => setTimeout(s, 5000));
     }
     if (r.data.again) throw new Error('This is taking longer than it should. Your payment is safe: press the button again to pick the run up, within 15 minutes.');
+    // The ticket is only let go on a result or an answer that says this payment is finished.
+    if (!r.ok && !r.data.final) throw new Error((r.data.error || 'Something went wrong.') + ' Your payment is kept: press the button again to pick the run up.');
     keep(null);
     if (!r.ok) throw new Error(r.data.error || 'The run failed.');
     $('#out').hidden = false; $('#out').textContent = r.data.output;

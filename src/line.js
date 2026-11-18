@@ -155,7 +155,7 @@ export async function createAgent(request, env) {
     });
   } catch { tx = { ok: false, stage: 'rpc' }; }
   if (!tx.ok) {
-    if (tx.stage !== 'wait') await unclaim(); // nothing was sent; it can be tried again
+    if (tx.stage === 'revert' || tx.stage === 'rpc') await unclaim(); // nothing was sent; it can be tried again
     return json({ error: 'The chain did not take it. Try again in a minute.' }, 502);
   }
 
