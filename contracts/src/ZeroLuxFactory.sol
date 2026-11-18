@@ -7,10 +7,11 @@ import {AgentWallet} from "./AgentWallet.sol";
 /// @notice Registers agents and deploys one wallet per agent. Holds the three
 ///         settings every wallet reads: who may meter runs (operator), where
 ///         run charges go (treasury) and the markup on a run's model cost.
-/// @dev    This contract never holds money. Changing the treasury takes two
-///         days in public, so a stolen owner key cannot redirect charges at
-///         once; the operator can be replaced at once, because that is the key
-///         most likely to leak.
+/// @dev    This contract never holds money. Each wallet copies the treasury
+///         and markup when it is made and keeps them until its own owner
+///         adopts new ones, so a stolen owner key here cannot redirect or
+///         reprice an existing wallet. The operator can be replaced at once,
+///         because that is the key most likely to leak.
 contract ZeroLuxFactory {
     uint16 public constant MAX_MARKUP_BPS = 5_000; // 50%
     uint256 public constant TREASURY_DELAY = 2 days;
@@ -35,6 +36,7 @@ contract ZeroLuxFactory {
 
     Agent[] private _agents;
     mapping(address wallet => uint256 idPlusOne) public agentIdOf;
+    mapping(address creator => uint256 count) public createdBy;
 
     event AgentCreated(uint256 indexed id, address indexed wallet, address indexed creator, bytes32 specHash);
     event OperatorSet(address indexed operator);
@@ -78,7 +80,7 @@ contract ZeroLuxFactory {
         returns (uint256 id, address wallet)
     {
         id = _agents.length;
-        wallet = _clone(walletImplementation, keccak256(abi.encode(msg.sender, id)));
+        wallet = _clone(walletImplementation, keccak256(abi.encode(msg.sender, createdBy[msg.sender]++)));
         AgentWallet(wallet).init(agentOwner, perRunCap, perDayCap);
         _agents.push(Agent(wallet, msg.sender, specHash, uint64(block.timestamp)));
         agentIdOf[wallet] = id + 1;

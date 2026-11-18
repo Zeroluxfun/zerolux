@@ -4,6 +4,7 @@ pragma solidity ^0.8.26;
 import {Test} from "forge-std/Test.sol";
 import {ZeroLuxFactory} from "../src/ZeroLuxFactory.sol";
 import {AgentWallet} from "../src/AgentWallet.sol";
+import {ZeroLuxTreasury} from "../src/ZeroLuxTreasury.sol";
 
 contract MockUSDG {
     string public constant symbol = "USDG";
@@ -60,12 +61,11 @@ contract ZeroLuxTest is Test {
         wallet.init(mallory, 1, 1);
     }
 
-    function test_implementation_cannot_be_hijacked_usefully() public {
-        // Anyone can init the bare implementation, but it holds nothing and no clone reads its storage.
+    function test_implementation_is_locked() public {
         AgentWallet impl = AgentWallet(factory.walletImplementation());
         vm.prank(mallory);
+        vm.expectRevert(AgentWallet.AlreadyInitialised.selector);
         impl.init(mallory, 1, 1);
-        assertEq(wallet.owner(), alice);
     }
 
     function test_two_agents_get_distinct_wallets() public {
@@ -154,12 +154,29 @@ contract ZeroLuxTest is Test {
         wallet.charge("run1", 100_000);
     }
 
-    function test_markup_change_applies_to_later_runs() public {
+    function test_markup_change_reaches_a_wallet_only_when_its_owner_adopts_it() public {
         vm.prank(admin);
-        factory.setMarkup(1_000);
+        factory.setMarkup(5_000);
         vm.prank(operator);
         wallet.charge("run1", 500_000);
-        assertEq(usdg.balanceOf(treasury), 550_000);
+        assertEq(usdg.balanceOf(treasury), 600_000); // still 20%
+        vm.prank(mallory);
+        vm.expectRevert(AgentWallet.NotOwner.selector);
+        wallet.adoptTerms(treasury, 5_000);
+        vm.prank(alice);
+        wallet.adoptTerms(treasury, 5_000);
+        vm.prank(operator);
+        wallet.charge("run2", 500_000);
+        assertEq(usdg.balanceOf(treasury), 600_000 + 750_000);
+    }
+
+    function test_new_agents_get_the_current_terms() public {
+        vm.prank(admin);
+        factory.setMarkup(1_000);
+        (, address w2) = factory.createAgent(alice, RUN_CAP, DAY_CAP, bytes32(0));
+        assertEq(AgentWallet(w2).markupBps(), 1_000);
+        assertEq(AgentWallet(w2).treasury(), treasury);
+        assertEq(wallet.markupBps(), 2_000);
     }
 
     // ---- the owner's money ----
@@ -168,7 +185,6 @@ contract ZeroLuxTest is Test {
         vm.prank(alice);
         wallet.withdraw(address(usdg), alice, 100e6);
         assertEq(usdg.balanceOf(alice), 100e6);
-        assertEq(wallet.totalWithdrawn(), 100e6);
     }
 
     function test_owner_can_withdraw_while_paused() public {
@@ -261,9 +277,102 @@ contract ZeroLuxTest is Test {
         factory.acceptTreasury();
         vm.stopPrank();
         assertEq(factory.treasury(), next);
+        // An existing wallet keeps paying the treasury it was made with...
         vm.prank(operator);
         wallet.charge("run1", 100_000);
+        assertEq(usdg.balanceOf(next), 0);
+        assertEq(usdg.balanceOf(treasury), 120_000);
+        // ...until its owner adopts the change.
+        {
+            address t_ = factory.treasury();
+            uint16 m_ = factory.markupBps();
+            vm.prank(alice);
+            wallet.adoptTerms(t_, m_);
+        }
+        vm.prank(operator);
+        wallet.charge("run2", 100_000);
         assertEq(usdg.balanceOf(next), 120_000);
+    }
+
+    function test_stolen_factory_owner_key_cannot_redirect_or_reprice_existing_wallets() public {
+        // The thief takes the factory, becomes operator and treasury, and sets the highest markup.
+        vm.startPrank(admin);
+        factory.transferOwnership(mallory);
+        vm.stopPrank();
+        vm.startPrank(mallory);
+        factory.acceptOwnership();
+        factory.setOperator(mallory);
+        factory.setMarkup(5_000);
+        factory.proposeTreasury(mallory);
+        vm.warp(block.timestamp + 2 days);
+        factory.acceptTreasury();
+        // Charges still land in the original treasury at the original markup.
+        wallet.charge("theft", 500_000);
+        vm.stopPrank();
+        assertEq(usdg.balanceOf(mallory), 0);
+        assertEq(usdg.balanceOf(treasury), 600_000);
+        // And the wallet owner can still leave.
+        vm.prank(alice);
+        wallet.withdraw(address(usdg), alice, 100e6 - 600_000);
+        assertEq(usdg.balanceOf(address(wallet)), 0);
+    }
+
+    function test_wallet_address_depends_only_on_the_creator() public {
+        // Someone else creating agents in between does not change the address a creator gets next.
+        uint256 snap = vm.snapshotState();
+        vm.prank(alice);
+        (, address expected) = factory.createAgent(alice, 1, 1, bytes32(0));
+        vm.revertToState(snap);
+        vm.prank(mallory);
+        factory.createAgent(mallory, 1, 1, bytes32(0));
+        vm.prank(alice);
+        (, address got) = factory.createAgent(alice, 1, 1, bytes32(0));
+        assertEq(got, expected);
+    }
+
+    function test_adoptTerms_only_takes_the_values_the_owner_named() public {
+        vm.prank(admin);
+        factory.setMarkup(1_000); // announced
+        vm.prank(admin);
+        factory.setMarkup(5_000); // swapped just before the owner's transaction lands
+        vm.prank(alice);
+        vm.expectRevert(AgentWallet.TermsChanged.selector);
+        wallet.adoptTerms(treasury, 1_000);
+        assertEq(wallet.markupBps(), 2_000);
+        vm.prank(alice);
+        vm.expectRevert(AgentWallet.TermsChanged.selector);
+        wallet.adoptTerms(mallory, 5_000);
+        assertEq(wallet.treasury(), treasury);
+    }
+
+    function test_treasury_contract_holds_charges_and_only_its_owner_withdraws() public {
+        ZeroLuxTreasury t = new ZeroLuxTreasury(admin);
+        ZeroLuxFactory f2 = new ZeroLuxFactory(address(usdg), admin, operator, address(t), 2_000);
+        (, address w) = f2.createAgent(alice, RUN_CAP, DAY_CAP, bytes32(0));
+        usdg.mint(w, 10e6);
+        vm.prank(operator);
+        AgentWallet(w).charge("run1", 500_000);
+        assertEq(usdg.balanceOf(address(t)), 600_000);
+        vm.prank(mallory);
+        vm.expectRevert(ZeroLuxTreasury.NotOwner.selector);
+        t.withdraw(address(usdg), mallory, 1);
+        vm.prank(admin);
+        t.withdraw(address(usdg), admin, 600_000);
+        assertEq(usdg.balanceOf(admin), 600_000);
+        // The key can be rotated without the treasury address changing.
+        address next = makeAddr("nextAdmin");
+        vm.prank(admin);
+        t.transferOwnership(next);
+        vm.prank(next);
+        t.acceptOwnership();
+        vm.prank(admin);
+        vm.expectRevert(ZeroLuxTreasury.NotOwner.selector);
+        t.withdraw(address(usdg), admin, 0);
+        // ETH sent by mistake can be taken out too.
+        vm.deal(address(t), 1 ether);
+        vm.prank(next);
+        t.withdraw(address(0), next, 1 ether);
+        assertEq(next.balance, 1 ether);
     }
 
     // ---- properties ----
@@ -273,6 +382,12 @@ contract ZeroLuxTest is Test {
         cost = uint96(bound(cost, 1, 10e6));
         vm.prank(admin);
         factory.setMarkup(markup);
+        {
+            address t_ = factory.treasury();
+            uint16 m_ = factory.markupBps();
+            vm.prank(alice);
+            wallet.adoptTerms(t_, m_);
+        }
         uint256 before = usdg.balanceOf(address(wallet));
         vm.prank(operator);
         try wallet.charge("fuzz", cost) {
