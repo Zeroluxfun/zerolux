@@ -3,16 +3,22 @@
 // then charge the agent's wallet for what the run cost.
 //
 // Rules this file must keep:
-//  - A payment counts only if USDG logged it: a Transfer of the exact amount in
-//    our own receipt, or an AuthorizationUsed event for that signer and nonce
-//    (someone else may have submitted it first). A used signature can be sent
-//    again without failing and moves nothing, so a successful transaction alone
-//    proves nothing.
+//  - A payment counts only on proof that USDG moved the exact price from the
+//    signer to this agent's wallet: a Transfer in our own receipt, or, when
+//    someone else submitted the payment first, USDG's AuthorizationUsed log for
+//    that signer and nonce FOLLOWED DIRECTLY by that Transfer in the same
+//    transaction. The nonce being spent proves nothing by itself: the signer
+//    can spend one nonce on a different payment. A successful transaction
+//    proves nothing either: a used signature can be sent again and moves nothing.
 //  - The signed payment is the ticket. Its run row is written BEFORE anything is
 //    sent, keyed on signer and nonce, so one payment can never buy two runs and
 //    a customer who was cut off gets their run by sending the same request again.
-//  - Spend is counted across attempts. A run never costs the agent more than the
-//    call earned, and a run that keeps failing stops after three attempts.
+//  - Model spend is written down before each model call at its worst case and
+//    corrected after, so a request that is cut off cannot hide what it cost.
+//    A run never costs the agent more than the call earned, and a payment gets
+//    at most three attempts.
+//  - Admission is one statement: an agent never has more than MAX_UNBILLED runs
+//    in flight, and each bucket of agents has a daily ceiling on admitted budget.
 //  - Nothing here can pay anyone but the agent's wallet or its pinned treasury.
 //  - An agent is taken off the line only when its own wallet refuses a charge for
 //    a reason its owner controls. Our own outages never suspend anyone.
@@ -24,9 +30,14 @@ const NETWORK_COST = 6_000; // USDG units ($0.006): each run costs us two transa
 const MAX_ATTEMPTS = 3; // tries one payment gets
 const RUN_DEADLINE_MS = 100_000; // one attempt, start to finish
 const STUCK_MS = 6 * 60_000; // an attempt still "running" after this is dead
+const COME_BACK_MS = 15 * 60_000; // how long a paid run waits for its buyer to resend
 const MAX_UNBILLED = 2; // runs one agent may have in flight before more payments are refused
-const DAILY_MODEL_CAP = 25_000_000; // units ($25): model spend across every agent per day; past it, no new runs
-const RATES = { fast: { in: 0.1, out: 0.5 }, smart: { in: 2, out: 10 } }; // dollars per million tokens
+// Daily ceilings on admitted run budgets (USDG units). Agents with a billing record
+// and agents without one are counted apart, so new agents cannot use up the room of proven ones.
+const BUCKETS = { 'spend:new': 15_000_000, 'spend:proven': 300_000_000 };
+const PROVEN_AFTER = 5; // billed runs
+// Dollars per million tokens, as listed by the model provider for the two models in line.js (checked 2026-11-18).
+const RATES = { fast: { in: 0.1, out: 0.5 }, smart: { in: 2, out: 10 } };
 const AUTH_TYPES = {
   TransferWithAuthorization: [
     { name: 'from', type: 'address' }, { name: 'to', type: 'address' }, { name: 'value', type: 'uint256' },
@@ -36,6 +47,7 @@ const AUTH_TYPES = {
 const UNBILLED = "('paying', 'paid', 'running', 'ran')";
 const AGAIN = { 'retry-after': '5' };
 const now = () => new Date().toISOString();
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 export function requirements(agent, url) {
   return {
@@ -48,7 +60,7 @@ export function requirements(agent, url) {
     }],
     // Everything a wallet needs to sign, apart from `from`, `validBefore` (at most 15 minutes ahead) and a random 32-byte `nonce`.
     sign: { domain: USDG_DOMAIN, types: AUTH_TYPES, primaryType: 'TransferWithAuthorization', message: { to: agent.wallet, value: String(agent.price), validAfter: '0' } },
-    note: 'If a reply says "again", send the identical request with the identical payment. One payment buys one run and is never charged twice.',
+    note: 'If a reply says "again", send the identical request with the identical payment within 15 minutes. One payment buys one run and is never charged twice.',
   };
 }
 
@@ -65,20 +77,64 @@ function readPayment(request, body) {
   } catch { return { error: 'The payment has a malformed number.' }; }
 }
 
-const spentToday = async (env) => (await env.DB.prepare("SELECT n FROM limits WHERE k = 'spend:all' AND day = ?").bind(today()).first())?.n || 0;
-const addSpend = (env, units) => units > 0 && env.DB.prepare("INSERT INTO limits (k, day, n) VALUES ('spend:all', ?, ?) ON CONFLICT (k, day) DO UPDATE SET n = n + excluded.n").bind(today(), units).run();
+const isTransfer = (l, from, wallet, value) => {
+  if (l.address.toLowerCase() !== USDG.toLowerCase()) return false;
+  try {
+    const ev = decodeEventLog({ abi: usdgAbi, topics: l.topics, data: l.data });
+    return ev.eventName === 'Transfer' && getAddress(ev.args.from) === from && getAddress(ev.args.to) === wallet && ev.args.value === value;
+  } catch { return false; }
+};
 
-// Did USDG log this signed payment as used? Returns the transaction that used it.
-async function authorizationUsedIn(env, from, nonce, fromBlock) {
-  const logs = await reader(env).getLogs({
+// Was this exact payment made by a transaction that was not ours? USDG logs
+// AuthorizationUsed and then, as the very next log, the Transfer it caused.
+// Returns { tx } when both are there, { wrong: true } when the nonce was spent
+// on some other payment, {} when the nonce has not been logged at all.
+async function proofElsewhere(env, from, nonce, wallet, value, fromBlock) {
+  const c = reader(env);
+  const logs = await c.getLogs({
     address: USDG, event: parseAbiItem('event AuthorizationUsed(address indexed authorizer, bytes32 indexed nonce)'),
     args: { authorizer: from, nonce }, fromBlock: BigInt(fromBlock), toBlock: 'latest',
   });
-  return logs[0]?.transactionHash || null;
+  if (!logs.length) return {};
+  const used = logs[0];
+  const receipt = await c.getTransactionReceipt({ hash: used.transactionHash });
+  const next = receipt.logs.find((l) => l.logIndex === used.logIndex + 1);
+  return next && isTransfer(next, from, wallet, value) ? { tx: used.transactionHash } : { wrong: true };
+}
+
+// A run that will never happen gives its admitted budget back to its bucket.
+const voidRun = (env, run) => env.DB.batch([
+  env.DB.prepare("UPDATE runs SET status = 'void' WHERE id = ? AND status = 'paying'").bind(run.id),
+  env.DB.prepare('UPDATE limits SET n = MAX(0, n - ?) WHERE k = ? AND day = ?').bind(run.budget, run.bucket, run.created_at.slice(0, 10)),
+]);
+
+// Send the customer's signed payment and settle the row on what the chain says.
+// Returns 'paid', 'void' or 'pending' (not known yet; the same request can be sent again).
+async function submit(env, pay, wallet, run) {
+  const { v, r, s, yParity } = parseSignature(pay.signature);
+  let tx;
+  try {
+    tx = await signer(env).send({
+      to: USDG, abi: 'usdg', functionName: 'transferWithAuthorization',
+      args: [pay.from, wallet, pay.value, pay.validAfter, pay.validBefore, pay.nonce, Number(v ?? (yParity ? 28 : 27)), r, s],
+    });
+  } catch { return 'pending'; }
+  if (!tx.ok) { if (tx.stage !== 'revert') return 'pending'; await voidRun(env, run); return 'void'; }
+  let payTx = tx.logs.some((l) => isTransfer(l, pay.from, wallet, pay.value)) ? tx.hash : null;
+  if (!payTx) {
+    // Ours moved nothing: someone submitted this payment first, or the nonce went on something else.
+    let proof; try { proof = await proofElsewhere(env, pay.from, pay.nonce, wallet, pay.value, run.from_block); } catch { return 'pending'; }
+    if (proof.wrong) { await voidRun(env, run); return 'void'; }
+    if (!proof.tx) return 'pending'; // a node that is behind; the sweep or a resend settles it
+    payTx = proof.tx;
+  }
+  await env.DB.prepare("UPDATE runs SET status = 'paid', pay_tx = ? WHERE id = ? AND status = 'paying'").bind(payTx, run.id).run();
+  return 'paid';
 }
 
 // POST /a/:id/run {input}
 export async function hire(request, env, ctx, agent) {
+  if (Number(request.headers.get('content-length') || 0) > 60_000) return json({ error: 'too large' }, 413);
   const text = await request.text().catch(() => '');
   if (text.length > 60_000) return json({ error: 'too large' }, 413);
   let body; try { body = JSON.parse(text); } catch { return json({ error: 'Send JSON: {"input": "..."}' }, 400); }
@@ -104,15 +160,12 @@ export async function hire(request, env, ctx, agent) {
   // Holding the signed payment is what entitles the caller to its run.
   const id = keccak256(concat([pay.from, pay.nonce]));
   const existing = await env.DB.prepare('SELECT * FROM runs WHERE id = ?').bind(id).first();
-  if (existing) return resume(env, ctx, agent, spec, wallet, existing, input);
+  if (existing) return resume(env, ctx, agent, spec, wallet, existing, input, pay);
 
-  if (agent.status !== 'live') return json({ error: 'This agent is off the line. Nothing was charged.' }, 409);
+  if (agent.status !== 'live') return json({ error: 'This agent is off the line.' }, 409);
   const t = BigInt(Math.floor(Date.now() / 1000));
-  const stale = pay.validAfter > t || pay.validBefore < t + 45n; // too late to submit; still fine if it was already used
+  const stale = pay.validAfter > t || pay.validBefore < t + 45n; // too late to submit; still fine if it was already made
   if (pay.validBefore > t + 900n) return json({ error: 'Sign a payment that expires within 15 minutes.' }, 400);
-  if ((await spentToday(env)) >= DAILY_MODEL_CAP) return json({ error: 'The factory has reached its limit for today. Nothing was charged.' }, 503);
-  const open = await env.DB.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(budget), 0) AS budgets FROM runs WHERE agent_id = ? AND status IN ${UNBILLED}`).bind(agent.id).first();
-  if (open.n >= MAX_UNBILLED) return json({ error: 'This agent is busy. Nothing was charged; try again in a few seconds.', again: true }, 429, AGAIN);
 
   // One round trip: is the agent able to take a run, and can the customer pay?
   const c = reader(env);
@@ -128,71 +181,64 @@ export async function hire(request, env, ctx, agent) {
       c.readContract({ address: env.FACTORY, abi: factoryAbi, functionName: 'isAgentWallet', args: [wallet] }),
       c.getBlockNumber(),
     ]);
-  } catch { return json({ error: 'The chain is not answering. Nothing was charged; try again.', again: true }, 503, AGAIN); }
+  } catch { return json({ error: 'The chain is not answering. Send the same request again in a few seconds.', again: true }, 503, AGAIN); }
   if (!registered) return json({ error: 'This agent is off the line.' }, 409);
-  if (stale && !used) return json({ error: 'The payment is not valid right now. Sign a fresh one.' }, 400);
-  // Already used, and not through us: if USDG logged it, someone submitted the customer's
-  // payment first. The money still reached this agent's wallet, so the run is still owed.
+
+  // Already used, and not through us. If USDG shows this exact payment reaching this
+  // wallet, someone submitted it first and the run is still owed. Anything else is not a payment.
   let early = null;
   if (used) {
-    try { early = await authorizationUsedIn(env, pay.from, pay.nonce, Number(block > 15_000n ? block - 15_000n : 0n)); }
+    let proof;
+    try { proof = await proofElsewhere(env, pay.from, pay.nonce, wallet, pay.value, Number(block > 15_000n ? block - 15_000n : 0n)); }
     catch { return json({ error: 'The chain is not answering. Send the same request again in a few seconds.', again: true }, 503, AGAIN); }
-    if (!early) return json({ error: 'This payment was cancelled or used long ago. Sign a new one.' }, 409);
+    if (!proof.tx) return json({ error: 'This payment was not made: its number was already used for something else, was cancelled, or is too old. Sign a new one.' }, 409);
+    early = proof.tx;
+  } else {
+    if (stale) return json({ error: 'The payment is not valid right now. Sign a fresh one.' }, 400);
+    if (funds < pay.value) return json({ error: 'Your wallet does not hold enough USDG.' }, 400);
   }
-  if (!used && funds < pay.value) return json({ error: 'Your wallet does not hold enough USDG.' }, 400);
+
   // The most this run may cost the agent, fee included: never more than the call earns.
   const ceiling = runCap < pay.value ? runCap : pay.value;
   const budget = (ceiling * 10_000n) / (10_000n + BigInt(markup));
+  const open = await env.DB.prepare(`SELECT COALESCE(SUM(budget), 0) AS budgets, (SELECT COUNT(*) FROM runs WHERE agent_id = ?1 AND status = 'billed') AS billed FROM runs WHERE agent_id = ?1 AND status IN ${UNBILLED}`).bind(agent.id).first();
   const pending = (BigInt(open.budgets) * (10_000n + BigInt(markup))) / 10_000n; // what runs already in flight may still charge today
-  if (paused || room < ceiling + pending || budget < BigInt(NETWORK_COST) + 4_000n) {
-    return json({ error: early ? 'This payment already reached the agent\'s wallet, but the agent is not taking runs right now. Send the same request again later, or ask its owner.' : 'This agent is not taking runs right now. Nothing was charged.' }, 409);
-  }
+  const sorry = early ? ' Your payment already reached the agent\'s wallet; send the same request again within 15 minutes, or ask its owner.' : ' Nothing was charged.';
+  if (paused || room < ceiling + pending || budget < BigInt(NETWORK_COST) + 4_000n) return json({ error: 'This agent is not taking runs right now.' + sorry }, 409);
 
-  // Write the run down before any money can move.
-  const claim = await env.DB.prepare('INSERT OR IGNORE INTO runs (id, agent_id, payer, nonce, paid, budget, valid_before, from_block, pay_tx, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-    .bind(id, agent.id, pay.from, pay.nonce, Number(pay.value), Number(budget), Number(pay.validBefore), Number(block > 20n ? block - 20n : 0n), early, early ? 'paid' : 'paying', now()).run();
-  if (!claim.meta.changes) return json({ error: 'This payment is already being handled. Send the same request again in a few seconds.', again: true }, 409, AGAIN);
-  if (early) return attempt(env, ctx, agent, spec, wallet, id, pay.from, input);
-
-  const { v, r, s, yParity } = parseSignature(pay.signature);
-  let tx;
-  try {
-    tx = await signer(env).send({
-      to: USDG, abi: 'usdg', functionName: 'transferWithAuthorization',
-      args: [pay.from, wallet, pay.value, pay.validAfter, pay.validBefore, pay.nonce, Number(v ?? (yParity ? 28 : 27)), r, s],
-    });
-  } catch { tx = { ok: false, stage: 'rpc' }; }
-  if (!tx.ok && tx.stage === 'revert') {
-    await env.DB.prepare("UPDATE runs SET status = 'void' WHERE id = ? AND status = 'paying'").bind(id).run();
-    return json({ error: 'USDG refused the payment. Nothing was charged.' }, 409);
+  // Admission. First a place under today's ceiling for this kind of agent, then the row itself, which is
+  // only written while the agent has room. Each is a single statement, so a burst cannot walk through.
+  const bucket = open.billed >= PROVEN_AFTER ? 'spend:proven' : 'spend:new';
+  const day = today();
+  await env.DB.prepare('INSERT OR IGNORE INTO limits (k, day, n) VALUES (?, ?, 0)').bind(bucket, day).run();
+  const seat = await env.DB.prepare('UPDATE limits SET n = n + ?1 WHERE k = ?2 AND day = ?3 AND n + ?1 <= ?4').bind(Number(budget), bucket, day, BUCKETS[bucket]).run();
+  if (!seat.meta.changes) return json({ error: 'The factory has reached its limit for today.' + sorry }, 503);
+  const fromBlock = Number(block > 20n ? block - 20n : 0n);
+  const created = now();
+  const claim = await env.DB.prepare(`INSERT INTO runs (id, agent_id, payer, nonce, paid, budget, valid_before, from_block, pay_tx, status, bucket, created_at)
+    SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12
+    WHERE NOT EXISTS (SELECT 1 FROM runs WHERE id = ?1) AND (SELECT COUNT(*) FROM runs WHERE agent_id = ?2 AND status IN ${UNBILLED}) < ?13`)
+    .bind(id, agent.id, pay.from, pay.nonce, Number(pay.value), Number(budget), Number(pay.validBefore), fromBlock, early, early ? 'paid' : 'paying', bucket, created, MAX_UNBILLED).run();
+  if (!claim.meta.changes) {
+    await env.DB.prepare('UPDATE limits SET n = MAX(0, n - ?) WHERE k = ? AND day = ?').bind(Number(budget), bucket, day).run();
+    return json({ error: 'This agent is busy.' + sorry + ' Try again in a few seconds.', again: true }, 429, AGAIN);
   }
-  if (!tx.ok) return json({ error: 'The payment is still being confirmed. Send the same request again in a few seconds; you will not be charged twice.', again: true }, 503, AGAIN);
+  const run = { id, budget: Number(budget), bucket, created_at: created, from_block: fromBlock };
 
-  let payTx = tx.logs.some((l) => {
-    if (l.address.toLowerCase() !== USDG.toLowerCase()) return false;
-    try {
-      const ev = decodeEventLog({ abi: usdgAbi, topics: l.topics, data: l.data });
-      return ev.eventName === 'Transfer' && getAddress(ev.args.from) === pay.from && getAddress(ev.args.to) === wallet && ev.args.value === pay.value;
-    } catch { return false; }
-  }) ? tx.hash : null;
-  if (!payTx) {
-    // Ours moved nothing. Either someone submitted this payment first (the money
-    // still reached the wallet, and the run is still owed) or it was never good.
-    try { payTx = await authorizationUsedIn(env, pay.from, pay.nonce, Number(block > 20n ? block - 20n : 0n)); }
-    catch { return json({ error: 'The payment is still being confirmed. Send the same request again in a few seconds.', again: true }, 503, AGAIN); }
-    if (!payTx) {
-      await env.DB.prepare("UPDATE runs SET status = 'void' WHERE id = ? AND status = 'paying'").bind(id).run();
-      return json({ error: 'No money moved, so nothing ran. Sign a new payment.' }, 409);
-    }
+  if (!early) {
+    const state = await submit(env, pay, wallet, run);
+    if (state === 'void') return json({ error: 'No money moved, so nothing ran. Sign a new payment.' }, 409);
+    if (state === 'pending') return json({ error: 'The payment is still being confirmed. Send the same request again in a few seconds; you will not be charged twice.', again: true }, 503, AGAIN);
   }
-  await env.DB.prepare("UPDATE runs SET status = 'paid', pay_tx = ? WHERE id = ? AND status = 'paying'").bind(payTx, id).run();
   return attempt(env, ctx, agent, spec, wallet, id, pay.from, input);
 }
 
 // The same signed payment came back: pick its run up wherever it stopped.
-async function resume(env, ctx, agent, spec, wallet, run, input) {
+async function resume(env, ctx, agent, spec, wallet, run, input, pay) {
   if (run.agent_id !== agent.id) return json({ error: 'This payment belongs to another agent.' }, 400);
-  if (run.status === 'paying') run = await reconcile(env, run);
+  if (run.status === 'paying' && Date.now() - Date.parse(run.created_at) > 20_000) {
+    run = await reconcile(env, run, wallet, pay);
+  }
   if (run.status === 'paid' && run.attempts >= MAX_ATTEMPTS) return json({ error: 'This payment has used all of its tries.' }, 409);
   switch (run.status) {
     case 'paid': return attempt(env, ctx, agent, spec, wallet, run.id, run.payer, input);
@@ -207,17 +253,26 @@ async function resume(env, ctx, agent, spec, wallet, run, input) {
   }
 }
 
-// A row still "paying": find out from the chain whether the money moved.
-async function reconcile(env, run) {
-  if (Date.now() - Date.parse(run.created_at) < 20_000) return run; // the request that made it may still be sending
-  let payTx;
-  try { payTx = await authorizationUsedIn(env, run.payer, run.nonce, run.from_block); } catch { return run; }
-  if (payTx) {
-    await env.DB.prepare("UPDATE runs SET status = 'paid', pay_tx = ? WHERE id = ? AND status = 'paying'").bind(payTx, run.id).run();
-  } else if (run.valid_before * 1000 < Date.now() - 60_000) {
-    await env.DB.prepare("UPDATE runs SET status = 'void' WHERE id = ? AND status = 'paying'").bind(run.id).run();
+// A row still "paying": ask the chain. With the signed payment in hand (`pay`) it
+// can also be sent again if it was never sent. Returns the row as it now stands.
+async function reconcile(env, run, wallet, pay) {
+  const reread = () => env.DB.prepare('SELECT * FROM runs WHERE id = ?').bind(run.id).first();
+  let proof, used;
+  try {
+    proof = await proofElsewhere(env, run.payer, run.nonce, wallet, BigInt(run.paid), run.from_block);
+    used = proof.tx || proof.wrong ? true : await reader(env).readContract({ address: USDG, abi: usdgAbi, functionName: 'authorizationState', args: [run.payer, run.nonce] });
+  } catch { return run; }
+  if (proof.tx) {
+    await env.DB.prepare("UPDATE runs SET status = 'paid', pay_tx = ? WHERE id = ? AND status = 'paying'").bind(proof.tx, run.id).run();
+    return reread();
   }
-  return env.DB.prepare('SELECT * FROM runs WHERE id = ?').bind(run.id).first();
+  const expired = run.valid_before * 1000 < Date.now() + 45_000;
+  if (proof.wrong || (!used && expired)) { await voidRun(env, run); return reread(); }
+  // Used but no log yet (a node that is behind): wait; give up ten minutes after it could last have been made.
+  if (used) { if (run.valid_before * 1000 < Date.now() - 600_000) await voidRun(env, run); return reread(); }
+  // Never sent, and still good: send it now.
+  if (pay) await submit(env, pay, wallet, run);
+  return reread();
 }
 
 async function attempt(env, ctx, agent, spec, wallet, id, payer, input) {
@@ -226,29 +281,28 @@ async function attempt(env, ctx, agent, spec, wallet, id, payer, input) {
     .bind(mark, now(), id, MAX_ATTEMPTS).first();
   if (!run) return json({ error: 'This run is being handled. Send the same request again in a few seconds.', again: true }, 409, AGAIN);
 
-  let result, failedSpend = 0;
-  try { result = await work(env, agent, spec, payer, input, run.budget - NETWORK_COST - run.spent); }
-  catch (e) { failedSpend = Number(e?.spent) || 0; }
-  const spent = run.spent + (result ? result.spent : failedSpend);
-  await addSpend(env, result ? result.spent : failedSpend);
-  const clamp = (n) => Math.max(1, Math.min(run.budget, n));
+  let output = null;
+  try { output = await work(env, agent, spec, payer, input, { id, room: run.budget - NETWORK_COST - run.spent }); } catch {}
+  // work() keeps the row's `spent` current as it goes, so this is true even if it died.
+  const { spent } = await env.DB.prepare('SELECT spent FROM runs WHERE id = ?').bind(id).first();
+  const cost = Math.max(1, Math.min(run.budget, spent + NETWORK_COST));
+  const settle = (waitMs) => { const b = bill(env, { id, agent_id: agent.id, wallet, cost }).catch(() => {}); ctx.waitUntil(b); return Promise.race([b, sleep(waitMs)]); };
 
-  if (!result) {
+  if (!output) {
     if (run.attempts >= MAX_ATTEMPTS) {
       // Out of tries. The agent still pays for the model time it used.
-      const done = await env.DB.prepare("UPDATE runs SET status = 'ran', spent = ?, cost = ?, finished_at = ? WHERE id = ? AND attempt = ? AND status = 'running'").bind(spent, clamp(spent + NETWORK_COST), now(), id, mark).run();
-      if (done.meta.changes) ctx.waitUntil(bill(env, { id, agent_id: agent.id, wallet, cost: clamp(spent + NETWORK_COST) }));
+      const done = await env.DB.prepare("UPDATE runs SET status = 'ran', cost = ?, finished_at = ? WHERE id = ? AND attempt = ? AND status = 'running'").bind(cost, now(), id, mark).run();
+      if (done.meta.changes) settle(0);
       return json({ error: 'The agent failed three times and this payment cannot be tried again. The payment went to the agent\'s wallet; its owner is the one to ask for it back.', run: id, tx: run.pay_tx }, 502);
     }
-    await env.DB.prepare("UPDATE runs SET status = 'paid', spent = ? WHERE id = ? AND attempt = ? AND status = 'running'").bind(spent, id, mark).run();
-    return json({ error: 'The agent failed before finishing. You were charged once. Send the same request again with the same payment and it runs again at no cost.', again: true, run: id, tx: run.pay_tx }, 502, AGAIN);
+    await env.DB.prepare("UPDATE runs SET status = 'paid' WHERE id = ? AND attempt = ? AND status = 'running'").bind(id, mark).run();
+    return json({ error: 'The agent failed before finishing. You were charged once. Send the same request again with the same payment within 15 minutes and it runs again at no cost.', again: true, run: id, tx: run.pay_tx }, 502, AGAIN);
   }
 
-  const cost = clamp(spent + NETWORK_COST);
-  const done = await env.DB.prepare("UPDATE runs SET status = 'ran', spent = ?, cost = ?, output = ?, finished_at = ? WHERE id = ? AND attempt = ? AND status = 'running'").bind(spent, cost, result.output, now(), id, mark).run();
+  const done = await env.DB.prepare("UPDATE runs SET status = 'ran', cost = ?, output = ?, finished_at = ? WHERE id = ? AND attempt = ? AND status = 'running'").bind(cost, output, now(), id, mark).run();
   if (!done.meta.changes) return json({ error: 'This run was picked up by another request. Send the same request again in a few seconds.', again: true }, 409, AGAIN);
-  await bill(env, { id, agent_id: agent.id, wallet, cost }).catch(() => {}); // the sweep bills it if this did not
-  return json({ output: result.output, run: id, paid: String(run.paid), tx: run.pay_tx, agent: { id: agent.id, name: agent.name } });
+  await settle(4_000); // the customer does not wait on billing for long; the sweep bills whatever this misses
+  return json({ output, run: id, paid: String(run.paid), tx: run.pay_tx, agent: { id: agent.id, name: agent.name } });
 }
 
 // ---- the agent at work ----
@@ -257,16 +311,17 @@ const TOOL_DEFS = {
   fetch_url: { type: 'function', function: { name: 'fetch_url', description: 'Read the text of a public https web page.', parameters: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] } } },
   remember: { type: 'function', function: { name: 'remember', description: 'Save one short note about this customer for future runs. Only for things the customer told you themselves.', parameters: { type: 'object', properties: { note: { type: 'string' } }, required: ['note'] } } },
 };
+const bytes = (s) => new TextEncoder().encode(s).length;
 
-// `budgetUnits` is what this attempt may spend on the model. Returns { output, spent };
-// on failure throws an error carrying `spent`, so nothing the model cost goes uncounted.
-async function work(env, agent, spec, payer, input, budgetUnits) {
+// `run.room` is what this attempt may spend on the model, in USDG units. Before every
+// model call the worst it could cost is added to the row's `spent`; afterwards that is
+// replaced by what it did cost. Returns the answer, or throws.
+async function work(env, agent, spec, payer, input, run) {
   const rate = RATES[spec.model] || RATES.fast;
-  const budget = budgetUnits / 1e6; // dollars
   const deadline = Date.now() + RUN_DEADLINE_MS;
-  let spent = 0; // dollars
-  const fail = (why) => Object.assign(new Error(why), { spent: Math.ceil(spent * 1e6) });
-  if (budget <= 0) throw fail('no budget left');
+  let used = 0; // units this attempt has put on the row
+  if (run.room <= 0) throw new Error('no budget left');
+  const book = (delta) => delta && env.DB.prepare('UPDATE runs SET spent = MAX(0, spent + ?) WHERE id = ?').bind(delta, run.id).run();
 
   const notes = spec.tools.includes('remember')
     ? (await env.DB.prepare('SELECT note FROM memory WHERE agent_id = ? AND payer = ? ORDER BY id DESC LIMIT 8').bind(agent.id, payer).all()).results.map((r) => r.note)
@@ -278,32 +333,33 @@ async function work(env, agent, spec, payer, input, budgetUnits) {
   ];
   const tools = spec.tools.map((t) => TOOL_DEFS[t]).filter(Boolean);
   let fetched = 0; // characters of web text pulled in so far
-  const size = () => messages.reduce((n, m) => n + (typeof m.content === 'string' ? m.content.length : 0) + JSON.stringify(m.tool_calls || '').length, 0);
+  const size = () => messages.reduce((n, m) => n + bytes(typeof m.content === 'string' ? m.content : '') + bytes(JSON.stringify(m.tool_calls || '')), 0);
 
   for (let step = 0; step < 6; step++) {
     const timeLeft = deadline - Date.now();
-    if (timeLeft < 8_000) throw fail('out of time');
-    // What sending the conversation so far will cost, before a single token comes back.
-    const inputCost = ((size() / 3 + 400) * rate.in) / 1e6;
-    const left = budget * 0.9 - spent - inputCost;
-    const affordable = Math.floor((left / rate.out) * 1e6);
-    if (affordable < 200) throw fail('out of budget');
+    if (timeLeft < 8_000) throw new Error('out of time');
+    // What sending the conversation so far will cost, before a single token comes back (about 3 bytes a token).
+    const inputUnits = Math.ceil((size() / 3 + 400) * rate.in);
+    const left = Math.floor(run.room * 0.9) - used - inputUnits;
+    const affordable = Math.floor(left / rate.out);
+    if (affordable < 200) throw new Error('out of budget');
     const last = step === 5 || affordable < 700;
-    const max_tokens = Math.min(4000, affordable);
-    let out;
-    try {
-      out = await chat(env, { model: MODELS[spec.model].id, messages, max_tokens, ...(tools.length ? { tools, tool_choice: last ? 'none' : 'auto' } : {}) }, Math.min(60_000, timeLeft - 3_000));
-    } catch { spent += inputCost; throw fail('model call failed'); } // assume the worst: the input was billed
+    const max_tokens = Math.min(2500, affordable);
+    const worst = inputUnits + Math.ceil(max_tokens * rate.out);
+    await book(worst); used += worst;
+    // If this call fails or the request dies here, the worst case stays on the books.
+    const out = await chat(env, { model: MODELS[spec.model].id, messages, max_tokens, ...(tools.length ? { tools, tool_choice: last ? 'none' : 'auto' } : {}) }, Math.min(60_000, timeLeft - 3_000));
     const u = out.usage || {};
-    const reported = Number(u.cost);
-    const counted = ((u.prompt_tokens || 0) * rate.in + (u.completion_tokens || 0) * rate.out) / 1e6;
-    spent += Number.isFinite(reported) && reported > 0 ? Math.max(reported, counted) : counted > 0 ? counted : inputCost + (max_tokens * rate.out) / 1e6;
+    const reported = Math.ceil(Number(u.cost) * 1e6);
+    const counted = Math.ceil((u.prompt_tokens || 0) * rate.in + (u.completion_tokens || 0) * rate.out);
+    const actual = Number.isFinite(reported) && reported > 0 ? Math.max(reported, counted) : counted > 0 ? counted : worst;
+    await book(actual - worst); used += actual - worst;
 
     const msg = out.choices[0].message;
     if (!msg.tool_calls?.length) {
       const output = String(msg.content || '').trim().slice(0, 24_000);
-      if (!output) throw fail('empty answer');
-      return { output, spent: Math.ceil(spent * 1e6) };
+      if (!output) throw new Error('empty answer');
+      return output;
     }
     messages.push({ role: 'assistant', content: msg.content || '', tool_calls: msg.tool_calls });
     for (const [i, call] of msg.tool_calls.entries()) {
@@ -323,7 +379,7 @@ async function work(env, agent, spec, payer, input, budgetUnits) {
       messages.push({ role: 'tool', tool_call_id: call.id, content });
     }
   }
-  throw fail('too many steps');
+  throw new Error('too many steps');
 }
 
 // Public https pages only: no addresses, no local names, no calls back into us.
@@ -336,20 +392,27 @@ function safeUrl(raw) {
   return u;
 }
 
-// Remove <script>, <style> and the like without a backtracking pattern: one pass, by index.
-function dropBlocks(html) {
-  const lower = html.toLowerCase(); let out = '', at = 0;
+// Turn HTML into text in one pass over the characters: tags go, and everything
+// inside <script>, <style>, <svg> and <noscript> goes with them.
+function plainText(html) {
+  const lower = html.toLowerCase(), SKIP = ['script', 'style', 'svg', 'noscript'];
+  let out = '', at = 0;
   while (at < html.length) {
-    let next = -1, tag = '';
-    for (const t of ['script', 'style', 'svg', 'noscript']) { const i = lower.indexOf('<' + t, at); if (i !== -1 && (next === -1 || i < next)) { next = i; tag = t; } }
-    if (next === -1) { out += html.slice(at); break; }
-    out += html.slice(at, next) + ' ';
-    const end = lower.indexOf('</' + tag, next);
-    if (end === -1) break; // unclosed: drop the rest
-    const close = lower.indexOf('>', end);
-    at = close === -1 ? html.length : close + 1;
+    const open = html.indexOf('<', at);
+    if (open === -1) { out += html.slice(at); break; }
+    out += html.slice(at, open) + ' ';
+    const tag = SKIP.find((t) => lower.startsWith(t, open + 1));
+    if (tag) {
+      const end = lower.indexOf('</' + tag, open);
+      if (end === -1) break; // unclosed: drop the rest
+      const close = html.indexOf('>', end);
+      at = close === -1 ? html.length : close + 1;
+    } else {
+      const close = html.indexOf('>', open);
+      at = close === -1 ? html.length : close + 1;
+    }
   }
-  return out;
+  return out.replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim();
 }
 
 async function fetchPage(raw, limit) {
@@ -369,8 +432,7 @@ async function fetchPage(raw, limit) {
     while (size < 300_000) { const { done, value } = await stream.read(); if (done) break; chunks.push(value); size += value.length; }
     stream.cancel().catch(() => {});
     const html = new TextDecoder().decode(await new Blob(chunks).arrayBuffer()).slice(0, 300_000);
-    const text = dropBlocks(html).replace(/<[^>]{0,2000}>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim();
-    return text.slice(0, limit) || 'The page had no readable text.';
+    return plainText(html).slice(0, limit) || 'The page had no readable text.';
   } catch { return 'The page could not be read.'; }
 }
 
@@ -390,47 +452,47 @@ export async function bill(env, run) {
 
   // The wallet refused. Ask it why before deciding anything.
   const c = reader(env);
-  let done, paused, balance, runCap, markup;
+  let done, paused, balance, runCap, dayCap, markup;
   try {
-    [done, paused, balance, runCap, markup] = await Promise.all([
+    [done, paused, balance, runCap, dayCap, markup] = await Promise.all([
       c.readContract({ address: run.wallet, abi: walletAbi, functionName: 'runCharged', args: [run.id] }),
       c.readContract({ address: run.wallet, abi: walletAbi, functionName: 'paused' }),
       c.readContract({ address: USDG, abi: usdgAbi, functionName: 'balanceOf', args: [run.wallet] }),
       c.readContract({ address: run.wallet, abi: walletAbi, functionName: 'perRunCap' }),
+      c.readContract({ address: run.wallet, abi: walletAbi, functionName: 'perDayCap' }),
       c.readContract({ address: run.wallet, abi: walletAbi, functionName: 'markupBps' }),
     ]);
   } catch { return; }
   if (done) return billed(null);
   const total = BigInt(run.cost) + (BigInt(run.cost) * BigInt(markup)) / 10_000n;
-  if (paused || balance < total || runCap < total) {
-    // The owner paused it, emptied it or cut its limit: it comes off the line until it pays.
+  if (paused || balance < total || runCap < total || dayCap < total) {
+    // The owner paused it, emptied it or cut a limit below one run: it comes off the line until it pays.
     return env.DB.batch([
       env.DB.prepare("UPDATE runs SET status = 'unpaid' WHERE id = ? AND status = 'ran'").bind(run.id),
       env.DB.prepare("UPDATE agents SET status = 'suspended' WHERE id = ?").bind(run.agent_id),
     ]);
   }
-  // Otherwise it is the daily limit or something passing: leave it to be billed later.
+  // Otherwise today's limit is used up or something is passing: leave it to be billed later.
   return env.DB.prepare('UPDATE runs SET bill_tries = bill_tries + 1 WHERE id = ?').bind(run.id).run();
 }
 
 // Every few minutes. Touches the chain only when a row needs it.
 export async function sweep(env) {
   const ago = (ms) => new Date(Date.now() - ms).toISOString();
+  const closeCost = `MAX(1, MIN(budget, spent + ${NETWORK_COST}))`;
   await env.DB.batch([
-    // attempts that died mid-run: free them for another try (a late finisher no longer holds the mark's status)
+    // attempts that died mid-run: free them for another try (a late finisher has lost the status it needs)
     env.DB.prepare("UPDATE runs SET status = 'paid' WHERE status = 'running' AND started_at < ?").bind(ago(STUCK_MS)),
-    // out of tries: bill any model time used, otherwise close
-    env.DB.prepare("UPDATE runs SET status = 'ran', cost = MIN(budget, spent + ?), finished_at = ? WHERE status = 'paid' AND attempts >= ? AND spent > 0").bind(NETWORK_COST, now(), MAX_ATTEMPTS),
+    // paid runs that are out of tries, or whose buyer has not come back in time: bill any model time used, else close
+    env.DB.prepare(`UPDATE runs SET status = 'ran', cost = ${closeCost}, finished_at = ? WHERE status = 'paid' AND spent > 0 AND (attempts >= ? OR COALESCE(started_at, created_at) < ?)`).bind(now(), MAX_ATTEMPTS, ago(COME_BACK_MS)),
     env.DB.prepare("UPDATE runs SET status = 'failed' WHERE status = 'paid' AND attempts >= ?").bind(MAX_ATTEMPTS),
-    // paid runs nobody came back for within a day: bill any model time used, otherwise close them
-    env.DB.prepare("UPDATE runs SET status = 'ran', cost = MIN(budget, spent + ?), finished_at = ? WHERE status = 'paid' AND spent > 0 AND created_at < ?").bind(NETWORK_COST, now(), ago(24 * 3600_000)),
-    env.DB.prepare("UPDATE runs SET status = 'forfeit' WHERE status = 'paid' AND created_at < ?").bind(ago(24 * 3600_000)),
+    env.DB.prepare("UPDATE runs SET status = 'forfeit' WHERE status = 'paid' AND COALESCE(started_at, created_at) < ?").bind(ago(COME_BACK_MS)),
     env.DB.prepare('UPDATE runs SET output = NULL WHERE output IS NOT NULL AND finished_at < ?').bind(ago(24 * 3600_000)),
     env.DB.prepare('DELETE FROM limits WHERE day < ?').bind(ago(3 * 24 * 3600_000).slice(0, 10)),
     env.DB.prepare('DELETE FROM drafts WHERE created_at < ? AND spec_hash NOT IN (SELECT spec_hash FROM agents)').bind(ago(7 * 24 * 3600_000)),
   ]);
-  const paying = await env.DB.prepare("SELECT * FROM runs WHERE status = 'paying' AND created_at < ? ORDER BY created_at LIMIT 10").bind(ago(45_000)).all();
-  for (const run of paying.results) await reconcile(env, run);
+  const paying = await env.DB.prepare("SELECT r.*, a.wallet FROM runs r JOIN agents a ON a.id = r.agent_id WHERE r.status = 'paying' AND r.created_at < ? ORDER BY r.created_at LIMIT 10").bind(ago(45_000)).all();
+  for (const run of paying.results) await reconcile(env, run, getAddress(run.wallet), null);
   // Unpaid runs are retried once an hour for a week, in case the owner has put things right.
   const retryUnpaid = new Date().getUTCMinutes() < 5 ? ago(7 * 24 * 3600_000) : '9999';
   const due = await env.DB.prepare("SELECT r.id, r.agent_id, r.cost, a.wallet FROM runs r JOIN agents a ON a.id = r.agent_id WHERE (r.status = 'ran' AND r.finished_at < ?) OR (r.status = 'unpaid' AND r.finished_at > ?) ORDER BY r.bill_tries, r.finished_at LIMIT 12").bind(ago(60_000), retryUnpaid).all();

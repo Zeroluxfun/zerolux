@@ -142,10 +142,32 @@ async function pageAgent() {
 
   // hire it
   const say = (t, cls = 'err') => { const e = $('#runerr'); e.className = cls; e.textContent = t; };
+  // A signed payment is kept in this tab until its run has a final answer, so a reload cannot lose a paid run.
+  const KEEP = 'zl-ticket-' + id;
+  const keep = (v) => { try { v ? sessionStorage.setItem(KEEP, JSON.stringify(v)) : sessionStorage.removeItem(KEEP); } catch {} };
+  const kept = () => { try { return JSON.parse(sessionStorage.getItem(KEEP) || 'null'); } catch { return null; } };
+  async function collect(ticket, input) {
+    let r;
+    for (let tries = 0; tries < 60; tries++) { // up to five minutes
+      r = await api(`/a/${id}/run`, { input }, { 'x-payment': ticket });
+      if (r.ok || !r.data.again) break;
+      await new Promise((s) => setTimeout(s, 5000));
+    }
+    if (r.data.again) throw new Error('This is taking longer than it should. Your payment is safe: press the button again to pick the run up, within 15 minutes.');
+    keep(null);
+    if (!r.ok) throw new Error(r.data.error || 'The run failed.');
+    $('#out').hidden = false; $('#out').textContent = r.data.output;
+    $('#receipt').replaceChildren('Paid ' + usd(r.data.paid) + ' · ', tx(r.data.tx)); say('');
+    setTimeout(load, 9000);
+  }
+  const waiting = kept();
+  if (waiting && Date.now() - waiting.at < 15 * 60_000) { $('#input').value = waiting.input; $('#pay').textContent = 'Pick up your paid run'; say('You have a paid run waiting from a moment ago.', 'ok'); } else keep(null);
   $('#hire').addEventListener('submit', async (e) => {
     e.preventDefault(); const b = $('#pay'), input = $('#input').value.trim(); if (!input) return;
     b.disabled = true; say('');
     try {
+      const held = kept();
+      if (held && Date.now() - held.at < 15 * 60_000) { b.replaceChildren(el('span', { class: 'spin' }), ' Working…'); await collect(held.ticket, held.input); b.disabled = false; b.textContent = 'Pay ' + usd(A.price) + ' and run'; return; }
       const need = await api(`/a/${id}/run`, { input });
       if (need.status !== 402) throw new Error(need.data.error || 'This unit is not taking runs right now.');
       const from = await connect(); const sign = need.data.sign;
@@ -156,16 +178,8 @@ async function pageAgent() {
       b.replaceChildren(el('span', { class: 'spin' }), ' Working…');
       // One signed payment buys one run. If we are told "again", the same payment is sent again; it is never charged twice.
       const ticket = btoa(JSON.stringify({ x402Version: 1, scheme: 'exact', network: 'eip155:' + cfg.chainId, payload: { authorization: message, signature } }));
-      let r;
-      for (let tries = 0; tries < 8; tries++) {
-        r = await api(`/a/${id}/run`, { input }, { 'x-payment': ticket });
-        if (r.ok || !r.data.again) break;
-        await new Promise((s) => setTimeout(s, 5000));
-      }
-      if (!r.ok) throw new Error(r.data.error || 'The run failed.');
-      $('#out').hidden = false; $('#out').textContent = r.data.output;
-      $('#receipt').replaceChildren('Paid ' + usd(r.data.paid) + ' · ', tx(r.data.tx)); say('');
-      setTimeout(load, 9000);
+      keep({ ticket, input, at: Date.now() });
+      await collect(ticket, input);
     } catch (e2) { say(explain(e2)); }
     b.disabled = false; b.textContent = 'Pay ' + usd(A.price) + ' and run';
   });

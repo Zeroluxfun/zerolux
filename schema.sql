@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS runs (
   id TEXT PRIMARY KEY, agent_id INTEGER NOT NULL, payer TEXT NOT NULL, nonce TEXT NOT NULL, paid INTEGER NOT NULL,
   budget INTEGER NOT NULL, valid_before INTEGER NOT NULL, from_block INTEGER NOT NULL, pay_tx TEXT, status TEXT NOT NULL,
   attempt TEXT, attempts INTEGER NOT NULL DEFAULT 0, spent INTEGER NOT NULL DEFAULT 0, cost INTEGER, output TEXT,
-  charge_tx TEXT, bill_tries INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, started_at TEXT, finished_at TEXT);
+  charge_tx TEXT, bill_tries INTEGER NOT NULL DEFAULT 0, bucket TEXT NOT NULL, created_at TEXT NOT NULL, started_at TEXT, finished_at TEXT);
 CREATE INDEX IF NOT EXISTS runs_agent ON runs (agent_id, status);
 CREATE INDEX IF NOT EXISTS runs_status ON runs (status, finished_at);
 CREATE TABLE IF NOT EXISTS memory (id INTEGER PRIMARY KEY AUTOINCREMENT, agent_id INTEGER NOT NULL, payer TEXT NOT NULL, note TEXT NOT NULL, created_at TEXT NOT NULL);

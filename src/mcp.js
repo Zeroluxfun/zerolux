@@ -30,6 +30,7 @@ async function call(name, args, request, env, ctx) {
 
 export async function mcp(request, env, ctx) {
   if (request.method !== 'POST') return json({ jsonrpc: '2.0', error: { code: -32000, message: 'POST JSON-RPC here.' }, id: null }, 405, { allow: 'POST' });
+  if (!(request.headers.get('content-type') || '').toLowerCase().startsWith('application/json') || Number(request.headers.get('content-length') || 0) > 80_000) return json({ jsonrpc: '2.0', error: { code: -32600, message: 'Send application/json.' }, id: null }, 400);
   let msg; try { msg = JSON.parse((await request.text()).slice(0, 80_000)); } catch { return json({ jsonrpc: '2.0', error: { code: -32700, message: 'Parse error' }, id: null }, 400); }
   const reply = (result) => json({ jsonrpc: '2.0', id: msg.id, result });
   if (msg.id === undefined) return new Response(null, { status: 202 }); // notifications

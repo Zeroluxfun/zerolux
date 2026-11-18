@@ -32,6 +32,7 @@ function gate(request, env, url) {
 }
 
 async function waitlist(request, env) {
+  if (Number(request.headers.get('content-length') || 0) > 2000) return Response.json({ error: 'too large' }, { status: 413 });
   const text = await request.text().catch(() => '');
   if (text.length > 2000) return Response.json({ error: 'too large' }, { status: 413 });
   let body; try { body = JSON.parse(text); } catch { return Response.json({ error: 'bad request' }, { status: 400 }); }

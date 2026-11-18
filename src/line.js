@@ -35,6 +35,7 @@ export const clientKey = (request) => {
 // Body of a JSON POST, or null. Refusing other content types stops another site's page from posting here unasked.
 export async function readJson(request, max = 20_000) {
   if (!(request.headers.get('content-type') || '').toLowerCase().startsWith('application/json')) return null;
+  if (Number(request.headers.get('content-length') || 0) > max) return null;
   const text = await request.text().catch(() => '');
   if (text.length > max) return null;
   try { return JSON.parse(text); } catch { return null; }
@@ -154,7 +155,7 @@ export async function createAgent(request, env) {
     });
   } catch { tx = { ok: false, stage: 'rpc' }; }
   if (!tx.ok) {
-    if (tx.stage === 'revert') await unclaim(); // nothing happened; it can be tried again
+    if (tx.stage !== 'wait') await unclaim(); // nothing was sent; it can be tried again
     return json({ error: 'The chain did not take it. Try again in a minute.' }, 502);
   }
 

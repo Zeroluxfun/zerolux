@@ -133,14 +133,17 @@ export class Signer extends DurableObject {
       try {
         const row = await this.env.DB.prepare("SELECT COALESCE(SUM(paid), 0) AS n FROM runs WHERE agent_id = ? AND id != ? AND status IN ('paying', 'paid', 'running', 'ran')").bind(run.agent_id, run.id).first();
         const c = reader(this.env);
-        const [profit, markup] = await Promise.all([
+        const [profit, markup, settled] = await Promise.all([
           c.readContract({ address: run.wallet, abi: walletAbi, functionName: 'profit' }),
           c.readContract({ address: run.wallet, abi: walletAbi, functionName: 'markupBps' }),
+          c.readContract({ address: run.wallet, abi: walletAbi, functionName: 'settledProfit' }),
         ]);
         const cost = BigInt(run.cost);
         // Final profit once this run is billed: today's, less this charge, less money held for runs still to bill.
         upTo = profit - cost - (cost * BigInt(markup)) / 10_000n - BigInt(row.n);
-        if (upTo < 0n) upTo = 0n;
+        // Never pull the checkpoint back: profit already counted as final stays final
+        // (the contract itself lowers it if a charge takes profit below it).
+        if (upTo < settled) upTo = settled;
       } catch { upTo = null; }
       // If the figure could not be worked out, charge without moving the checkpoint at all.
       return upTo === null
