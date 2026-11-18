@@ -107,7 +107,7 @@ export async function line(request, env) {
   let raw;
   try {
     const out = await chat(env, {
-      model: MODELS.fast.id, max_tokens: 1400, temperature: 0.6, response_format: { type: 'json_object' },
+      model: MODELS.fast.id, max_tokens: 2600, temperature: 0.6, response_format: { type: 'json_object' },
       messages: [{ role: 'system', content: LINE_PROMPT }, { role: 'user', content: job }],
     });
     const text = out.choices[0].message.content || '';
