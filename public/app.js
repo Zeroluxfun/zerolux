@@ -211,4 +211,10 @@ async function pageAgent() {
   $('#endlien').addEventListener('click', guard(() => act('endLien', '')));
 }
 
+// click a command to copy it
+document.querySelectorAll('[data-copy]').forEach((pre) => {
+  pre.style.cursor = 'copy'; pre.title = 'Click to copy';
+  pre.addEventListener('click', async () => { const t = pre.textContent; try { await navigator.clipboard.writeText(t); pre.textContent = 'Copied'; setTimeout(() => (pre.textContent = t), 900); } catch {} });
+});
+
 ({ create: pageCreate, floor: pageFloor, agent: pageAgent })[document.body.dataset.page]?.().catch(() => {});
