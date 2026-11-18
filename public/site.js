@@ -41,6 +41,15 @@
     }));
   }
 
+  // Live readings, counted from the units' wallet contracts.
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  fetch('/api/agents').then((r) => (r.ok ? r.json() : null)).then((d) => {
+    if (!d) return;
+    set('r-agents', d.totals.agents.toLocaleString('en-US'));
+    set('r-runs', d.totals.runs.toLocaleString('en-US'));
+    set('r-income', '$' + (Number(d.totals.income) / 1e6).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+  }).catch(() => {});
+
   document.querySelectorAll('form.join').forEach((form) => {
     const input = form.querySelector('input');
     const button = form.querySelector('button');
@@ -56,7 +65,7 @@
         if (res.ok) {
           form.classList.add('done');
           input.value = ''; input.placeholder = 'You are on the list';
-          if (note) note.textContent = 'Logged. One email when the line opens.';
+          if (note) note.textContent = 'Logged. An email only when something ships.';
         } else {
           if (note) note.textContent = res.status === 400 ? 'That address does not look right.' : 'That did not go through. Try again.';
           button.disabled = false;

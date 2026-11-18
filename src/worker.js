@@ -70,11 +70,11 @@ async function routeProduct(request, env, ctx, url) {
   }
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS', 'access-control-allow-headers': 'content-type, x-payment, x-retry, mcp-protocol-version, mcp-session-id', 'access-control-max-age': '86400' } });
   const page = (path) => env.ASSETS.fetch(new Request(new URL(path, url), request)).then((res) => {
-    const h = secure(new Headers(res.headers)); h.set('cache-control', 'no-cache'); return new Response(res.body, { status: res.status, headers: h });
+    const h = secure(new Headers(res.headers)); h.set('cache-control', 'no-cache, no-transform'); return new Response(res.body, { status: res.status, headers: h });
   });
   if (p === '/agent') return simple('Not found: Zero Lux', 'Nothing at this address.', 404);
   if (p in PAGES) return page(PAGES[p]);
-  if (m && !m[2] && request.method === 'GET') return page('/agent');
+  if (m && !m[2] && request.method === 'GET') return env.FACTORY && !(await findAgent(env, m[1])) ? simple('Not found: Zero Lux', 'No unit with that number.', 404) : page('/agent');
   if (['/app.js', '/app.css', '/skill.md'].includes(p)) return page(p);
   if (['/create.html', '/floor.html', '/agent.html'].includes(p)) return simple('Not found: Zero Lux', 'Nothing at this address.', 404);
   if (!env.FACTORY || !env.OPERATOR_KEY || !env.RPC_URL) return json({ error: 'The factory is not switched on yet.' }, 503);
