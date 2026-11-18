@@ -135,6 +135,8 @@ async function pageAgent() {
     $('#o-avail').textContent = usd(s.withdrawable); $('#o-held').textContent = lien ? usd(BigInt(s.balance || 0) - BigInt(s.withdrawable || 0)) : usd(0);
     $('#pause').textContent = s.paused ? 'Resume runs' : 'Pause runs'; $('#pause').dataset.next = s.paused ? '0' : '1';
     $('#lienform').hidden = !!lien; $('#endlien').hidden = !lien;
+    // Version 2 wallets can be named in the identity registry as the wallet this agent is paid at.
+    const nm = $('#nameit'); if (nm) { nm.hidden = !(A.version === 2 && A.identity && !s.named); $('#named').hidden = !s.named; }
     return true;
   };
   if (!(await load())) return;
@@ -209,6 +211,25 @@ async function pageAgent() {
     act('setLien', word(to) + uintWord(Math.round(pct * 100)) + uintWord(cap));
   }));
   $('#endlien').addEventListener('click', guard(() => act('endLien', '')));
+  // Two steps in the owner's wallet: sign the statement, then send it to the registry.
+  $('#nameit')?.addEventListener('click', async () => {
+    try {
+      const from = await connect();
+      if (from.toLowerCase() !== A.owner.toLowerCase()) throw new Error('Connect the wallet that owns this unit (' + short(A.owner) + ').');
+      const deadline = Math.floor(Date.now() / 1000) + 240;
+      const sig = await eth().request({ method: 'eth_signTypedData_v4', params: [from, JSON.stringify({
+        domain: { name: 'ERC8004IdentityRegistry', version: '1', chainId: cfg.chainId, verifyingContract: cfg.identity },
+        primaryType: 'AgentWalletSet', message: { agentId: String(A.identity), newWallet: A.wallet, owner: from, deadline: String(deadline) },
+        types: { EIP712Domain: [{ name: 'name', type: 'string' }, { name: 'version', type: 'string' }, { name: 'chainId', type: 'uint256' }, { name: 'verifyingContract', type: 'address' }],
+          AgentWalletSet: [{ name: 'agentId', type: 'uint256' }, { name: 'newWallet', type: 'address' }, { name: 'owner', type: 'address' }, { name: 'deadline', type: 'uint256' }] },
+      })] });
+      // what the wallet contract checks: (agentId, deadline, the owner's signature), packed the standard way
+      const blob = uintWord(A.identity) + uintWord(deadline) + uintWord(96) + uintWord(65) + sig.replace(/^0x/, '').padEnd(192, '0');
+      const data = cfg.selectors.setAgentWallet + uintWord(A.identity) + word(A.wallet) + uintWord(deadline) + uintWord(128) + uintWord(blob.length / 2) + blob;
+      const h = await sendTx(from, cfg.identity, data);
+      oerr('Sent. The registry will show this wallet within a minute. Transaction ' + short(h), 'ok'); setTimeout(load, 65_000);
+    } catch (e) { oerr(explain(e)); }
+  });
 }
 
 // click a command to copy it

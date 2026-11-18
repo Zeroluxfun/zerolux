@@ -9,7 +9,8 @@ CREATE TABLE IF NOT EXISTS drafts (spec_hash TEXT PRIMARY KEY, spec TEXT NOT NUL
 CREATE TABLE IF NOT EXISTS agents (
   id INTEGER PRIMARY KEY, wallet TEXT NOT NULL UNIQUE, owner TEXT NOT NULL, name TEXT NOT NULL,
   spec TEXT NOT NULL, spec_hash TEXT NOT NULL UNIQUE, price INTEGER NOT NULL, identity_id TEXT, create_tx TEXT,
-  status TEXT NOT NULL DEFAULT 'live', stats TEXT, stats_at TEXT, created_at TEXT NOT NULL);
+  status TEXT NOT NULL DEFAULT 'live', stats TEXT, stats_at TEXT, created_at TEXT NOT NULL,
+  v INTEGER NOT NULL DEFAULT 1, chain_id INTEGER);
 -- One row per signed payment, written before the payment is submitted. id = keccak256(payer, nonce).
 -- status: paying -> paid -> running -> ran -> billed; or void (no money moved), unpaid (wallet refused the
 -- charge), forfeit (paid, and its buyer did not come back in time), failed (out of tries with nothing spent).
@@ -18,9 +19,11 @@ CREATE TABLE IF NOT EXISTS runs (
   budget INTEGER NOT NULL, valid_before INTEGER NOT NULL, from_block INTEGER NOT NULL, pay_tx TEXT, status TEXT NOT NULL,
   attempt TEXT, attempts INTEGER NOT NULL DEFAULT 0, spent INTEGER NOT NULL DEFAULT 0, cost INTEGER, output TEXT,
   charge_tx TEXT, bill_tries INTEGER NOT NULL DEFAULT 0, bucket TEXT NOT NULL, created_at TEXT NOT NULL, submitted_at TEXT, paid_at TEXT,
-  started_at TEXT, finished_at TEXT);
+  started_at TEXT, finished_at TEXT, held INTEGER NOT NULL DEFAULT 0);
 CREATE INDEX IF NOT EXISTS runs_agent ON runs (agent_id, status);
 CREATE INDEX IF NOT EXISTS runs_status ON runs (status, finished_at);
 CREATE TABLE IF NOT EXISTS memory (id INTEGER PRIMARY KEY AUTOINCREMENT, agent_id INTEGER NOT NULL, payer TEXT NOT NULL, note TEXT NOT NULL, created_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS memory_who ON memory (agent_id, payer);
 CREATE TABLE IF NOT EXISTS limits (k TEXT NOT NULL, day TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (k, day));
+-- agents.v is the wallet version (1 or 2), agents.chain_id the agent's number at its own factory, runs.held whether a
+-- version 2 wallet has the run's cost set aside. Databases made before these existed got them by ALTER TABLE ADD COLUMN.

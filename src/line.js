@@ -147,10 +147,12 @@ export async function createAgent(request, env) {
   const perRunCap = BigInt(spec.price); // a run can never cost the agent more than one call earns
   const perDayCap = BigInt(Math.max(spec.price * 200, 10_000_000));
   const uri = `https://zerolux.fun/card/${hash}.json`;
+  // New agents are made on the newest factory. Its version stays with the agent.
+  const factory = env.FACTORY2 || env.FACTORY, version = env.FACTORY2 ? 2 : 1;
   let tx;
   try {
     tx = await signer(env).send({
-      to: env.FACTORY, abi: 'factory', functionName: 'createAgent',
+      to: factory, abi: 'factory', functionName: 'createAgent',
       args: [getAddress(owner), perRunCap, perDayCap, hash, uri, env.TREASURY, Number(env.MARKUP_BPS)],
     });
   } catch { tx = { ok: false, stage: 'rpc' }; }
@@ -161,7 +163,7 @@ export async function createAgent(request, env) {
 
   let id, wallet, identity = null;
   for (const l of tx.logs) {
-    if (l.address.toLowerCase() !== env.FACTORY.toLowerCase()) continue;
+    if (l.address.toLowerCase() !== factory.toLowerCase()) continue;
     try {
       const ev = decodeEventLog({ abi: factoryAbi, topics: l.topics, data: l.data });
       if (ev.eventName === 'AgentCreated') { id = Number(ev.args.id); wallet = ev.args.wallet; }
@@ -170,8 +172,10 @@ export async function createAgent(request, env) {
   }
   if (wallet == null) return json({ error: 'Created, but the receipt could not be read. Transaction ' + tx.hash }, 502);
 
-  await env.DB.prepare(
-    'INSERT INTO agents (id, wallet, owner, name, spec, spec_hash, price, identity_id, create_tx, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-  ).bind(id, wallet, getAddress(owner), spec.name, JSON.stringify(spec), hash, spec.price, identity, tx.hash, 'live', new Date().toISOString()).run();
-  return json({ id, wallet, identity, tx: tx.hash });
+  // Each factory numbers its agents from zero, so the site keeps its own running number, taken in the same statement.
+  const made = await env.DB.prepare(
+    `INSERT INTO agents (id, wallet, owner, name, spec, spec_hash, price, identity_id, create_tx, status, created_at, v, chain_id)
+     SELECT COALESCE(MAX(id), -1) + 1, ?, ?, ?, ?, ?, ?, ?, ?, 'live', ?, ?, ? FROM agents RETURNING id`,
+  ).bind(wallet, getAddress(owner), spec.name, JSON.stringify(spec), hash, spec.price, identity, tx.hash, new Date().toISOString(), version, id).first();
+  return json({ id: made.id, wallet, identity, tx: tx.hash });
 }

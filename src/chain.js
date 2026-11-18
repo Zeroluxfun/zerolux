@@ -61,6 +61,17 @@ export const walletAbi = parseAbi([
   'function runCharged(bytes32) view returns (bool)',
 ]);
 
+// Version 2 wallets: a run's cost is set aside before the work is done.
+export const wallet2Abi = parseAbi([
+  'function pay(address from, uint256 value, uint256 validAfter, uint256 validBefore, bytes32 nonce, uint8 v, bytes32 r, bytes32 s, bytes32 runId, uint256 budget)',
+  'function open(bytes32 runId, uint256 budget)',
+  'function release(bytes32 runId)',
+  'function holds(bytes32) view returns (uint128 amount, uint64 day, uint64 openedAt)',
+  'function heldTotal() view returns (uint256)',
+]);
+
+export const registryAbi = parseAbi(['function getAgentWallet(uint256 agentId) view returns (address)']);
+
 export const usdgAbi = parseAbi([
   'function balanceOf(address) view returns (uint256)',
   'function authorizationState(address authorizer, bytes32 nonce) view returns (bool)',
@@ -83,7 +94,7 @@ export class Signer extends DurableObject {
     this.queue = Promise.resolve();
   }
 
-  // call = { to, abi: 'factory' | 'wallet' | 'usdg', functionName, args }
+  // call = { to, abi: 'factory' | 'wallet' | 'wallet2' | 'usdg', functionName, args }
   send(call) {
     const job = this.queue.then(() => this._send(call));
     this.queue = job.catch(() => {});
@@ -91,7 +102,7 @@ export class Signer extends DurableObject {
   }
 
   async _send({ to, abi, functionName, args }) {
-    const abis = { factory: factoryAbi, wallet: walletAbi, usdg: usdgAbi };
+    const abis = { factory: factoryAbi, wallet: walletAbi, wallet2: wallet2Abi, usdg: usdgAbi };
     const account = privateKeyToAccount(this.env.OPERATOR_KEY);
     const transport = http(this.env.RPC_URL);
     const pub = createPublicClient({ chain: robinhood, transport });

@@ -1,9 +1,10 @@
 // Read side: the floor (every agent with its on-chain record), one agent,
 // the ERC-8004 card, and what a browser wallet needs to act on a wallet.
 import { getAddress, toFunctionSelector } from 'viem';
-import { reader, walletAbi, usdgAbi, USDG, CHAIN_ID, EXPLORER, IDENTITY } from './chain.js';
+import { reader, walletAbi, usdgAbi, registryAbi, USDG, CHAIN_ID, EXPLORER, IDENTITY } from './chain.js';
 import { json, MODELS, TOOLS } from './line.js';
 
+const address = (a) => String(a.wallet).toLowerCase();
 const FRESH_MS = 60_000; // chain figures are re-read at most once a minute per agent
 
 // One multicall for up to 40 wallets; everything a page shows about money.
@@ -23,6 +24,8 @@ async function refresh(env, rows) {
       { address, abi: walletAbi, functionName: 'withdrawable' },
       { address, abi: walletAbi, functionName: 'unsettled' },
       { address: USDG, abi: usdgAbi, functionName: 'balanceOf', args: [address] },
+      // the payment wallet the identity registry holds for this agent, if it has an identity
+      { address: IDENTITY, abi: registryAbi, functionName: 'getAgentWallet', args: [BigInt(a.identity_id || 0)] },
     ];
   });
   let out;
@@ -30,12 +33,13 @@ async function refresh(env, rows) {
   const at = new Date().toISOString();
   const writes = [];
   stale.forEach((a, i) => {
-    const r = out.slice(i * 9, i * 9 + 9);
-    if (r.some((x) => x.status !== 'success')) return;
+    const r = out.slice(i * 10, i * 10 + 10);
+    if (r.slice(0, 9).some((x) => x.status !== 'success')) return;
     const [income, charged, owner, paused, lien, lienUnpaid, withdrawable, unsettled, balance] = r.map((x) => x.result);
+    const named = r[9].status === 'success' && !!a.identity_id && String(r[9].result).toLowerCase() === address(a);
     const stats = {
       income: income.toString(), charged: charged.toString(), profit: (income - charged).toString(), balance: balance.toString(),
-      withdrawable: withdrawable.toString(), unsettled: unsettled.toString(), paused,
+      withdrawable: withdrawable.toString(), unsettled: unsettled.toString(), paused, named,
       lien: /^0x0{40}$/i.test(lien[0]) ? null : { payee: lien[0], bps: lien[1], cap: lien[2].toString(), paid: lien[3].toString(), unpaid: lienUnpaid.toString() },
     };
     a.stats = JSON.stringify(stats); a.stats_at = at; a.owner = owner;
@@ -48,7 +52,7 @@ function view(a, full) {
   const spec = JSON.parse(a.spec);
   const v = {
     id: a.id, name: a.name, tagline: spec.tagline, price: String(a.price), model: MODELS[spec.model]?.label, tools: spec.tools,
-    wallet: a.wallet, owner: a.owner, status: a.status, identity: a.identity_id, created_at: a.created_at,
+    wallet: a.wallet, owner: a.owner, status: a.status, identity: a.identity_id, created_at: a.created_at, version: a.v || 1,
     runs: a.runs ?? 0, stats: a.stats ? JSON.parse(a.stats) : null, stats_at: a.stats_at,
   };
   if (full) Object.assign(v, { job: spec.job, instructions: spec.instructions, input_hint: spec.input_hint, spec_hash: a.spec_hash, create_tx: a.create_tx });
@@ -110,6 +114,7 @@ export function config(env) {
     selectors: {
       withdraw: sel('withdraw(address,address,uint256)'), setLimits: sel('setLimits(uint128,uint128)'), setPaused: sel('setPaused(bool)'),
       setLien: sel('setLien(address,uint16,uint128)'), settleLien: sel('settleLien()'), endLien: sel('endLien()'),
+      setAgentWallet: sel('setAgentWallet(uint256,address,uint256,bytes)'),
     },
   }, 200, { 'cache-control': 'private, max-age=300' });
 }
