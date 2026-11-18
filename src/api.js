@@ -85,9 +85,12 @@ export async function card(env, hash) {
     name: spec.name,
     description: spec.tagline || spec.job,
     image: 'https://zerolux.fun/media/lux-token-3.png',
+    external_url: `https://zerolux.fun/a/${a.id}`,
     services: [
       { name: 'web', endpoint: `https://zerolux.fun/a/${a.id}` },
-      { name: 'x402', endpoint: `https://zerolux.fun/a/${a.id}/run`, version: '1' },
+      // The layout other Robinhood Chain projects read to list an agent for hire: a price, the network and who is paid.
+      { name: 'x402', endpoint: `https://zerolux.fun/a/${a.id}/run`, price: `${Number(a.price) / 1e6} USDG`, network: `eip155:${CHAIN_ID}`, payTo: a.wallet, docs: 'POST {"input": "..."} or GET ?input=...; https://zerolux.fun/skill.md' },
+      { name: 'wallet', endpoint: `eip155:${CHAIN_ID}:${a.wallet}` },
       { name: 'MCP', endpoint: 'https://zerolux.fun/mcp', version: '2025-06-18' },
     ],
     x402Support: true,

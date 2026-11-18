@@ -23,7 +23,7 @@
 //  - An agent is taken off the line only when its own wallet refuses a charge for
 //    a reason its owner controls. Our own outages never suspend anyone.
 import { keccak256, concat, getAddress, isAddress, isHex, verifyTypedData, parseSignature, decodeEventLog, parseAbiItem } from 'viem';
-import { reader, signer, walletAbi, usdgAbi, factoryAbi, USDG, USDG_DOMAIN, CHAIN_ID } from './chain.js';
+import { reader, signer, walletAbi, usdgAbi, factoryAbi, USDG, USDG_DOMAIN, CHAIN_ID, IDENTITY } from './chain.js';
 import { MODELS, json, chat, allow, clientKey, today } from './line.js';
 
 const NETWORK_COST = 10_000; // USDG units ($0.01): each run costs us two transactions (about $0.011 of gas when measured on mainnet), and that is part of its cost
@@ -50,6 +50,22 @@ const AGAIN = { 'retry-after': '5' };
 const now = () => new Date().toISOString();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// The same terms in the newer x402 layout (version 2), which travels in a response header.
+function requirementsV2(agent, url) {
+  return {
+    x402Version: 2, error: 'Payment required',
+    resource: { url, description: agent.name, mimeType: 'application/json' },
+    accepts: [{
+      scheme: 'exact', network: 'eip155:' + CHAIN_ID, amount: String(agent.price), asset: USDG, payTo: agent.wallet, maxTimeoutSeconds: 600,
+      extra: { name: USDG_DOMAIN.name, version: USDG_DOMAIN.version, ...(agent.identity_id ? { erc8004: { registry: `eip155:${CHAIN_ID}:${IDENTITY}`, agentId: String(agent.identity_id) } } : {}) },
+    }],
+  };
+}
+const b64 = (o) => btoa(unescape(encodeURIComponent(JSON.stringify(o))));
+const paymentRequired = (agent, url) => json(requirements(agent, url), 402, { 'payment-required': b64(requirementsV2(agent, url)) });
+// What a paying client reads to confirm settlement, in both header spellings.
+const receipt = (tx, payer) => { const v = b64({ success: true, transaction: tx, network: 'eip155:' + CHAIN_ID, payer }); return { 'x-payment-response': v, 'payment-response': v }; };
+
 export function requirements(agent, url) {
   return {
     x402Version: 1,
@@ -57,7 +73,7 @@ export function requirements(agent, url) {
     accepts: [{
       scheme: 'exact', network: 'eip155:' + CHAIN_ID, maxAmountRequired: String(agent.price), resource: url,
       description: agent.name, mimeType: 'application/json', payTo: agent.wallet, asset: USDG, maxTimeoutSeconds: 600,
-      extra: { name: USDG_DOMAIN.name, version: USDG_DOMAIN.version },
+      extra: { name: USDG_DOMAIN.name, version: USDG_DOMAIN.version, ...(agent.identity_id ? { erc8004: { registry: `eip155:${CHAIN_ID}:${IDENTITY}`, agentId: String(agent.identity_id) } } : {}) },
     }],
     // Everything a wallet needs to sign, apart from `from`, `validBefore` (at most 15 minutes ahead) and a random 32-byte `nonce`.
     sign: { domain: USDG_DOMAIN, types: AUTH_TYPES, primaryType: 'TransferWithAuthorization', message: { to: agent.wallet, value: String(agent.price), validAfter: '0' } },
@@ -66,7 +82,7 @@ export function requirements(agent, url) {
 }
 
 function readPayment(request, body) {
-  const header = request.headers.get('x-payment');
+  const header = request.headers.get('x-payment') || request.headers.get('payment-signature'); // x402 version 1 and 2
   let p = body?.payment;
   if (header) { try { p = JSON.parse(atob(header)); } catch { return { error: 'The X-PAYMENT header is not base64 JSON.' }; } }
   if (!p) return null;
@@ -155,18 +171,24 @@ async function submit(env, pay, wallet, run) {
 
 // POST /a/:id/run {input}
 export async function hire(request, env, ctx, agent) {
-  if (Number(request.headers.get('content-length') || 0) > 60_000) return json({ error: 'too large' }, 413);
-  const text = await request.text().catch(() => '');
-  if (text.length > 60_000) return json({ error: 'too large' }, 413);
-  let body; try { body = JSON.parse(text); } catch { return json({ error: 'Send JSON: {"input": "..."}' }, 400); }
-  const input = String(body?.input ?? '').trim().slice(0, 12_000);
-  if (!input) return json({ error: 'Send JSON: {"input": "..."}' }, 400);
+  // POST {"input": "..."} is the normal way in. GET ?input=... works too, for clients that can only pay a plain link.
+  let body = null;
+  if (request.method === 'POST') {
+    if (Number(request.headers.get('content-length') || 0) > 60_000) return json({ error: 'too large' }, 413);
+    const text = await request.text().catch(() => '');
+    if (text.length > 60_000) return json({ error: 'too large' }, 413);
+    if (text.trim()) { try { body = JSON.parse(text); } catch { return json({ error: 'Send JSON: {"input": "..."}' }, 400); } }
+  }
+  const asked = body?.input ?? body?.task ?? new URL(request.url).searchParams.get('input') ?? '';
+  const input = String(asked).trim().slice(0, 12_000);
   const spec = JSON.parse(agent.spec);
   const wallet = getAddress(agent.wallet);
 
   const pay = readPayment(request, body);
-  if (!pay) return agent.status === 'live' ? json(requirements(agent, request.url), 402) : json({ error: 'This agent is off the line.' }, 409);
+  // With no payment the answer is always the price, so a board or a client can read the terms before sending work.
+  if (!pay) return agent.status === 'live' ? paymentRequired(agent, request.url) : json({ error: 'This agent is off the line.' }, 409);
   if (pay.error) return json({ error: pay.error }, 400);
+  if (!input) return json({ error: 'Nothing was charged: there was no work in the request. Send JSON {"input": "..."} by POST, or add ?input=... to the address.' }, 400);
 
   if (pay.to !== wallet) return json({ error: 'The payment is not made out to this agent.' }, 400);
   if (pay.value !== BigInt(agent.price)) return json({ error: 'The payment must be exactly the price.' }, 400);
@@ -300,7 +322,7 @@ async function resume(env, ctx, agent, spec, wallet, run, input, pay) {
     case 'paying': return json({ error: 'The payment is still being confirmed. Send the same request again in a few seconds.', again: true }, 503, AGAIN);
     case 'ran': case 'billed': case 'unpaid':
       return run.output
-        ? json({ output: run.output, run: run.id, paid: String(run.paid), tx: run.pay_tx, agent: { id: agent.id, name: agent.name } })
+        ? json({ output: run.output, run: run.id, paid: String(run.paid), tx: run.pay_tx, agent: { id: agent.id, name: agent.name } }, 200, receipt(run.pay_tx, run.payer))
         : json({ error: 'This payment has already bought its run, and the result is no longer kept.', final: true }, 409);
     case 'void': return json({ error: 'No money moved with this payment. Sign a new one.', final: true }, 409);
     default: return json({ error: 'This payment\'s run is closed.', final: true }, 409);
@@ -344,7 +366,7 @@ async function attempt(env, ctx, agent, spec, wallet, id, payer, input) {
   const done = await env.DB.prepare("UPDATE runs SET status = 'ran', cost = ?, output = ?, finished_at = ? WHERE id = ? AND attempt = ? AND status = 'running'").bind(cost, output, now(), id, mark).run();
   if (!done.meta.changes) return json({ error: 'This run was picked up by another request. Send the same request again in a few seconds.', again: true }, 409, AGAIN);
   await settle(4_000); // the customer does not wait on billing for long; the sweep bills whatever this misses
-  return json({ output, run: id, paid: String(run.paid), tx: run.pay_tx, agent: { id: agent.id, name: agent.name } });
+  return json({ output, run: id, paid: String(run.paid), tx: run.pay_tx, agent: { id: agent.id, name: agent.name } }, 200, receipt(run.pay_tx, payer));
 }
 
 // ---- the agent at work ----

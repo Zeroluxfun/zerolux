@@ -44,7 +44,7 @@ async function waitlist(request, env) {
 }
 
 const PAGES = { '/create': '/create', '/floor': '/floor' }; // the asset layer serves x.html at /x
-const open = (res) => { const h = new Headers(res.headers); h.set('access-control-allow-origin', '*'); return new Response(res.body, { status: res.status, headers: h }); };
+const open = (res) => { const h = new Headers(res.headers); h.set('access-control-allow-origin', '*'); h.set('access-control-expose-headers', 'payment-required, payment-response, x-payment-response, retry-after'); return new Response(res.body, { status: res.status, headers: h }); };
 
 // Everything the factory does. Until PRODUCT is "on" these routes answer only
 // to a browser holding the build key (open any of them once with ?build=<key>).
@@ -68,7 +68,7 @@ async function routeProduct(request, env, ctx, url) {
     }
     if (!ok) return simple('Not found: Zero Lux', 'Nothing at this address.', 404);
   }
-  if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS', 'access-control-allow-headers': 'content-type, x-payment, x-retry, mcp-protocol-version, mcp-session-id', 'access-control-max-age': '86400' } });
+  if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS', 'access-control-allow-headers': 'content-type, x-payment, payment-signature, mcp-protocol-version, mcp-session-id', 'access-control-max-age': '86400' } });
   const page = (path) => env.ASSETS.fetch(new Request(new URL(path, url), request)).then((res) => {
     const h = secure(new Headers(res.headers)); h.set('cache-control', 'no-cache, no-transform'); return new Response(res.body, { status: res.status, headers: h });
   });
@@ -86,7 +86,7 @@ async function routeProduct(request, env, ctx, url) {
     if (p.startsWith('/card/')) return card(env, p.slice(6).replace(/\.json$/, ''));
     if (p === '/mcp') return open(await mcp(request, env, ctx));
     if (m && m[2]) {
-      if (request.method !== 'POST') return json({ error: 'POST {"input": "..."} to run this agent.' }, 405, { allow: 'POST', 'access-control-allow-origin': '*' });
+      if (request.method !== 'POST' && request.method !== 'GET') return json({ error: 'POST {"input": "..."} to run this agent.' }, 405, { allow: 'GET, POST', 'access-control-allow-origin': '*' });
       const a = await findAgent(env, m[1]);
       return a ? open(await hire(request, env, ctx, a)) : json({ error: 'not found' }, 404);
     }
