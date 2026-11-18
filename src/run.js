@@ -35,7 +35,7 @@ const MAX_UNBILLED = 2; // runs one agent may have in flight before more payment
 // Daily ceilings on admitted run budgets (USDG units). Agents with a billing record
 // and agents without one are counted apart, so new agents cannot use up the room of proven ones.
 const BUCKETS = { 'spend:new': 15_000_000, 'spend:proven': 300_000_000 };
-const AGENT_SHARE = { 'spend:new': 3_000_000, 'spend:proven': 60_000_000 }; // the most one agent may use of its bucket in a day
+const AGENT_SHARE = { 'spend:new': 4_000_000, 'spend:proven': 60_000_000 }; // the most one agent may use of its bucket in a day
 const PROVEN_AFTER = 5; // billed runs
 // Dollars per million tokens, as listed by the model provider for the two models in line.js (checked 2026-11-18).
 const RATES = { fast: { in: 0.1, out: 0.5 }, smart: { in: 2, out: 10 } };
@@ -237,7 +237,7 @@ export async function hire(request, env, ctx, agent) {
   // only written while the agent has room. Each is a single statement, so a burst cannot walk through.
   const bucket = open.billed >= PROVEN_AFTER ? 'spend:proven' : 'spend:new';
   // No single agent may hold more than its share of the day's room.
-  if (open.today + Number(budget) > AGENT_SHARE[bucket]) return json({ error: 'This agent has done all the work it may do today.' + sorry }, 429);
+  if (open.today + Number(budget) > AGENT_SHARE[bucket]) return json({ error: 'This agent has no room for more work right now.' + sorry + ' Try again later.' }, 429);
   const day = today();
   await env.DB.prepare('INSERT OR IGNORE INTO limits (k, day, n) VALUES (?, ?, 0)').bind(bucket, day).run();
   const seat = await env.DB.prepare('UPDATE limits SET n = n + ?1 WHERE k = ?2 AND day = ?3 AND n + ?1 <= ?4').bind(Number(budget), bucket, day, BUCKETS[bucket]).run();
@@ -270,9 +270,26 @@ async function resume(env, ctx, agent, spec, wallet, run, input, pay) {
   }
   if (run.status === 'void') {
     // Void is not final against the customer: if the payment did reach the wallet after all, the run is owed.
-    const proof = await proofElsewhere(env, run.payer, run.nonce, wallet, BigInt(run.paid), run.from_block).catch(() => ({}));
+    let proof;
+    try { proof = await proofElsewhere(env, run.payer, run.nonce, wallet, BigInt(run.paid), run.from_block); }
+    catch { return json({ error: 'The chain is not answering. Send the same request again in a few seconds.', again: true }, 503, AGAIN); }
     if (proof.tx) {
-      await env.DB.prepare("UPDATE runs SET status = 'paid', pay_tx = ?, paid_at = ? WHERE id = ? AND status = 'void'").bind(proof.tx, now(), run.id).run();
+      // A revived run goes through the same door as a new one: a seat in today's bucket, the
+      // agent's daily share, and a free slot. If there is no room right now, the ticket waits.
+      const day = today(), wait = (why) => json({ error: why + ' Your payment is safe; send the same request again shortly.', again: true }, 429, { 'retry-after': '30' });
+      const share = await env.DB.prepare(`SELECT COALESCE(SUM(CASE WHEN status IN ${UNBILLED} THEN budget ELSE COALESCE(cost, 0) END), 0) AS n FROM runs WHERE agent_id = ? AND status != 'void' AND created_at >= ?`).bind(agent.id, day).first();
+      if (share.n + run.budget > AGENT_SHARE[run.bucket]) return wait('This agent has no room for more work right now.');
+      await env.DB.prepare('INSERT OR IGNORE INTO limits (k, day, n) VALUES (?, ?, 0)').bind(run.bucket, day).run();
+      const seat = await env.DB.prepare('UPDATE limits SET n = n + ?1 WHERE k = ?2 AND day = ?3 AND n + ?1 <= ?4').bind(run.budget, run.bucket, day, BUCKETS[run.bucket]).run();
+      if (!seat.meta.changes) return wait('The factory is full right now.');
+      // created_at moves to now so the seat is later given back to the day it was taken in.
+      const stamp = now();
+      const back = await env.DB.prepare(`UPDATE runs SET status = 'paid', pay_tx = ?1, paid_at = ?2, created_at = ?2 WHERE id = ?3 AND status = 'void'
+        AND (SELECT COUNT(*) FROM runs WHERE agent_id = ?4 AND status IN ${UNBILLED}) < ?5`).bind(proof.tx, stamp, run.id, agent.id, MAX_UNBILLED).run();
+      if (!back.meta.changes) {
+        await env.DB.prepare('UPDATE limits SET n = MAX(0, n - ?) WHERE k = ? AND day = ?').bind(run.budget, run.bucket, day).run();
+        return wait('This agent is busy.');
+      }
       run = await env.DB.prepare('SELECT * FROM runs WHERE id = ?').bind(run.id).first();
     }
   }

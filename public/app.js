@@ -163,13 +163,13 @@ async function pageAgent() {
     setTimeout(load, 9000);
   }
   const waiting = kept();
-  if (waiting && Date.now() - waiting.at < 15 * 60_000) { $('#input').value = waiting.input; $('#pay').textContent = 'Pick up your paid run'; say('You have a paid run waiting from a moment ago.', 'ok'); } else keep(null);
+  if (waiting && Date.now() - waiting.at < 40 * 60_000) { $('#input').value = waiting.input; $('#pay').textContent = 'Pick up your paid run'; say('You have a paid run waiting from a moment ago.', 'ok'); } else keep(null);
   $('#hire').addEventListener('submit', async (e) => {
     e.preventDefault(); const b = $('#pay'), input = $('#input').value.trim(); if (!input) return;
     b.disabled = true; say('');
     try {
       const held = kept();
-      if (held && Date.now() - held.at < 15 * 60_000) { b.replaceChildren(el('span', { class: 'spin' }), ' Working…'); await collect(held.ticket, held.input); b.disabled = false; b.textContent = 'Pay ' + usd(A.price) + ' and run'; return; }
+      if (held && Date.now() - held.at < 40 * 60_000) { b.replaceChildren(el('span', { class: 'spin' }), ' Working…'); await collect(held.ticket, held.input); b.disabled = false; b.textContent = 'Pay ' + usd(A.price) + ' and run'; return; }
       const need = await api(`/a/${id}/run`, { input });
       if (need.status !== 402) throw new Error(need.data.error || 'This unit is not taking runs right now.');
       const from = await connect(); const sign = need.data.sign;
