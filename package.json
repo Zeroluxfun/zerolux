@@ -10,5 +10,8 @@
   "license": "UNLICENSED",
   "devDependencies": {
     "wrangler": "^4.164.0"
+  },
+  "dependencies": {
+    "viem": "^2.58.0"
   }
 }

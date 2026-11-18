@@ -4,6 +4,13 @@
   "compatibility_date": "2026-09-01",
   "assets": { "directory": "./public", "binding": "ASSETS", "run_worker_first": true, "not_found_handling": "none" },
   "d1_databases": [{ "binding": "DB", "database_name": "zerolux", "database_id": "098dfda3-fe3d-4306-9bff-d8661231efe0" }],
+  "durable_objects": { "bindings": [{ "name": "SIGNER", "class_name": "Signer" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Signer"] }],
+  "triggers": { "crons": ["*/5 * * * *"] },
+  // FACTORY and TREASURY are the contracts on Robinhood Chain (4663). PRODUCT stays "off"
+  // (factory routes need the build key) until the whole product has been walked end to end.
+  // Secrets: OPERATOR_KEY, RPC_URL, OPENROUTER_KEY, BUILD_KEY.
+  "vars": { "FACTORY": "0xc9C8b726e73c78eb688e19f0b686CbBDE9F0985B", "TREASURY": "0xd6c53788C600fB99051417ab72E07E42eE5112C7", "MARKUP_BPS": "2000", "PRODUCT": "off" },
   "routes": [
     { "pattern": "zerolux.fun", "custom_domain": true },
     { "pattern": "www.zerolux.fun", "custom_domain": true }
