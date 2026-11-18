@@ -17,7 +17,14 @@ interface IUSDG {
 
 /// Runs against a fork of Robinhood Chain with the real USDG. Skipped unless
 /// FORK_RPC_URL is set:  FORK_RPC_URL=... forge test --match-contract ForkTest
+interface IIdentity {
+    function ownerOf(uint256) external view returns (address);
+    function tokenURI(uint256) external view returns (string memory);
+    function balanceOf(address) external view returns (uint256);
+}
+
 contract ForkTest is Test {
+    address constant IDENTITY = 0x8004A169FB4a3325136EB29fA0ceB6D2e539a432;
     address constant USDG = 0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168;
     bytes32 constant TRANSFER_TYPEHASH = keccak256(
         "TransferWithAuthorization(address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce)"
@@ -37,11 +44,12 @@ contract ForkTest is Test {
         string memory url = vm.envOr("FORK_RPC_URL", string(""));
         if (bytes(url).length == 0) return;
         vm.createSelectFork(url);
+        vm.setEvmVersion("cancun"); // contracts already on the chain use newer opcodes than we compile to
         live = true;
         customer = vm.addr(customerKey);
         treasury = new ZeroLuxTreasury(admin);
-        factory = new ZeroLuxFactory(USDG, admin, operator, address(treasury), 2_000);
-        (, address w) = factory.createAgent(alice, 1e6, 5e6, keccak256("spec"));
+        factory = new ZeroLuxFactory(USDG, admin, operator, address(treasury), 2_000, IDENTITY);
+        (, address w) = factory.createAgent(alice, 1e6, 5e6, keccak256("spec"), "", factory.treasury(), factory.markupBps());
         wallet = AgentWallet(w);
         deal(USDG, customer, 10e6);
     }
@@ -100,5 +108,42 @@ contract ForkTest is Test {
         treasury.withdraw(USDG, admin, 600_000);
         assertEq(IUSDG(USDG).balanceOf(admin), 600_000);
         assertEq(IUSDG(USDG).balanceOf(address(wallet)), 0);
+    }
+
+    function test_fork_agent_gets_a_real_erc8004_identity_owned_by_its_owner() public {
+        if (!live) return;
+        address bob = makeAddr("bob");
+        (uint256 id, address w) =
+            factory.createAgent(bob, 1e6, 5e6, keccak256("spec"), "https://zerolux.fun/agents/1/card.json", factory.treasury(), factory.markupBps());
+        ZeroLuxFactory.Agent memory a = factory.agent(id);
+        assertTrue(a.hasIdentity);
+        assertEq(IIdentity(IDENTITY).ownerOf(a.identityId), bob, "the owner holds the identity");
+        assertEq(IIdentity(IDENTITY).tokenURI(a.identityId), "https://zerolux.fun/agents/1/card.json");
+        assertEq(IIdentity(IDENTITY).balanceOf(address(factory)), 0, "the factory keeps nothing");
+        assertEq(AgentWallet(w).owner(), bob);
+        assertFalse(factory.agent(0).hasIdentity, "an empty address skips registration");
+    }
+
+    function test_fork_lien_pays_real_usdg_and_holds_back_the_owner() public {
+        if (!live) return;
+        address lender = makeAddr("lender");
+        vm.prank(alice);
+        wallet.setLien(lender, 2_500, 0);
+        deal(USDG, address(this), 8e6);
+        (bool ok,) = USDG.call(abi.encodeWithSelector(0xa9059cbb, address(wallet), 8e6));
+        assertTrue(ok);
+        assertEq(wallet.withdrawable(), 0, "unsettled income is held while a lien stands");
+        vm.prank(operator);
+        wallet.settle(type(uint256).max);
+        assertEq(wallet.income(), 8e6);
+        assertEq(wallet.withdrawable(), 6e6);
+        vm.prank(alice);
+        vm.expectRevert(AgentWallet.LienOwed.selector);
+        wallet.withdraw(USDG, alice, 6e6 + 1);
+        wallet.settleLien();
+        assertEq(IUSDG(USDG).balanceOf(lender), 2e6);
+        vm.prank(alice);
+        wallet.withdraw(USDG, alice, 6e6);
+        assertEq(IUSDG(USDG).balanceOf(alice), 6e6);
     }
 }

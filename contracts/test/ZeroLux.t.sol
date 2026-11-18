@@ -15,7 +15,7 @@ contract MockUSDG {
         balanceOf[to] += amount;
     }
 
-    function transfer(address to, uint256 amount) external returns (bool) {
+    function transfer(address to, uint256 amount) external virtual returns (bool) {
         balanceOf[msg.sender] -= amount;
         balanceOf[to] += amount;
         return true;
@@ -39,8 +39,8 @@ contract ZeroLuxTest is Test {
     function setUp() public {
         vm.warp(1_800_000_000);
         usdg = new MockUSDG();
-        factory = new ZeroLuxFactory(address(usdg), admin, operator, treasury, 2_000);
-        (, address w) = factory.createAgent(alice, RUN_CAP, DAY_CAP, keccak256("spec"));
+        factory = new ZeroLuxFactory(address(usdg), admin, operator, treasury, 2_000, address(0));
+        (, address w) = factory.createAgent(alice, RUN_CAP, DAY_CAP, keccak256("spec"), "", treasury, 2_000);
         wallet = AgentWallet(w);
         usdg.mint(w, 100e6);
     }
@@ -69,7 +69,7 @@ contract ZeroLuxTest is Test {
     }
 
     function test_two_agents_get_distinct_wallets() public {
-        (uint256 id, address w2) = factory.createAgent(alice, 1, 1, bytes32(0));
+        (uint256 id, address w2) = factory.createAgent(alice, 1, 1, bytes32(0), "", treasury, 2_000);
         assertEq(id, 1);
         assertTrue(w2 != address(wallet));
     }
@@ -173,7 +173,7 @@ contract ZeroLuxTest is Test {
     function test_new_agents_get_the_current_terms() public {
         vm.prank(admin);
         factory.setMarkup(1_000);
-        (, address w2) = factory.createAgent(alice, RUN_CAP, DAY_CAP, bytes32(0));
+        (, address w2) = factory.createAgent(alice, RUN_CAP, DAY_CAP, bytes32(0), "", treasury, 1_000);
         assertEq(AgentWallet(w2).markupBps(), 1_000);
         assertEq(AgentWallet(w2).treasury(), treasury);
         assertEq(wallet.markupBps(), 2_000);
@@ -321,12 +321,12 @@ contract ZeroLuxTest is Test {
         // Someone else creating agents in between does not change the address a creator gets next.
         uint256 snap = vm.snapshotState();
         vm.prank(alice);
-        (, address expected) = factory.createAgent(alice, 1, 1, bytes32(0));
+        (, address expected) = factory.createAgent(alice, 1, 1, bytes32(0), "", treasury, 2_000);
         vm.revertToState(snap);
         vm.prank(mallory);
-        factory.createAgent(mallory, 1, 1, bytes32(0));
+        factory.createAgent(mallory, 1, 1, bytes32(0), "", treasury, 2_000);
         vm.prank(alice);
-        (, address got) = factory.createAgent(alice, 1, 1, bytes32(0));
+        (, address got) = factory.createAgent(alice, 1, 1, bytes32(0), "", treasury, 2_000);
         assertEq(got, expected);
     }
 
@@ -347,8 +347,8 @@ contract ZeroLuxTest is Test {
 
     function test_treasury_contract_holds_charges_and_only_its_owner_withdraws() public {
         ZeroLuxTreasury t = new ZeroLuxTreasury(admin);
-        ZeroLuxFactory f2 = new ZeroLuxFactory(address(usdg), admin, operator, address(t), 2_000);
-        (, address w) = f2.createAgent(alice, RUN_CAP, DAY_CAP, bytes32(0));
+        ZeroLuxFactory f2 = new ZeroLuxFactory(address(usdg), admin, operator, address(t), 2_000, address(0));
+        (, address w) = f2.createAgent(alice, RUN_CAP, DAY_CAP, bytes32(0), "", f2.treasury(), f2.markupBps());
         usdg.mint(w, 10e6);
         vm.prank(operator);
         AgentWallet(w).charge("run1", 500_000);

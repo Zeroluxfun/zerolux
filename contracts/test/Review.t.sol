@@ -129,8 +129,8 @@ contract ReviewTest is Test {
     function setUp() public {
         vm.warp(1_800_000_000);
         usdg = new RToken();
-        factory = new ZeroLuxFactory(address(usdg), admin, operator, treasury, 2_000);
-        (, address w) = factory.createAgent(alice, RUN_CAP, DAY_CAP, keccak256("spec"));
+        factory = new ZeroLuxFactory(address(usdg), admin, operator, treasury, 2_000, address(0));
+        (, address w) = factory.createAgent(alice, RUN_CAP, DAY_CAP, keccak256("spec"), "", treasury, 2_000);
         wallet = AgentWallet(w);
         usdg.mint(w, 100e6);
     }
@@ -174,7 +174,7 @@ contract ReviewTest is Test {
         // setUp's wallet: this contract's creation number 0.
         assertEq(address(wallet), _predict(address(this), 0, initcode));
         assertEq(factory.createdBy(address(this)), 1);
-        (, address w) = factory.createAgent(alice, 1, 1, bytes32(0));
+        (, address w) = factory.createAgent(alice, 1, 1, bytes32(0), "", treasury, 2_000);
         assertEq(w, _predict(address(this), 1, initcode), "initcode differs from the standard one");
     }
 
@@ -205,7 +205,7 @@ contract ReviewTest is Test {
         vm.expectRevert(AgentWallet.NotOwner.selector);
         impl.adoptTerms(address(0), 0);
         // A fresh clone from the real factory starts unlocked and is initialised in the same call.
-        (, address w) = factory.createAgent(alice, RUN_CAP, DAY_CAP, bytes32(0));
+        (, address w) = factory.createAgent(alice, RUN_CAP, DAY_CAP, bytes32(0), "", treasury, 2_000);
         assertEq(AgentWallet(w).factory(), address(factory));
         assertEq(AgentWallet(w).treasury(), treasury);
         assertEq(AgentWallet(w).markupBps(), 2_000);
@@ -220,7 +220,7 @@ contract ReviewTest is Test {
     /// keep paying the treasury and markup they were created with.
     function test_review_stolen_owner_key_never_receives_from_existing_wallets() public {
         address bob = makeAddr("bob");
-        (, address w2) = factory.createAgent(bob, RUN_CAP, DAY_CAP, bytes32(0));
+        (, address w2) = factory.createAgent(bob, RUN_CAP, DAY_CAP, bytes32(0), "", treasury, 2_000);
         usdg.mint(w2, 100e6);
 
         vm.prank(admin); // stolen key
@@ -260,7 +260,7 @@ contract ReviewTest is Test {
         assertEq(AgentWallet(w2).markupBps(), 2_000);
 
         // Wallets created AFTER the switch do pay the thief, at the thief's markup.
-        (, address w3) = factory.createAgent(bob, RUN_CAP, DAY_CAP, bytes32(0));
+        (, address w3) = factory.createAgent(bob, RUN_CAP, DAY_CAP, bytes32(0), "", mallory, 5_000);
         assertEq(AgentWallet(w3).treasury(), mallory);
         assertEq(AgentWallet(w3).markupBps(), 5_000);
     }
@@ -451,12 +451,12 @@ contract ReviewTest is Test {
         usdg.mint(predicted, 10e6); // paid before it exists
 
         vm.startPrank(mallory); // tries to shift it
-        factory.createAgent(mallory, 0, 0, bytes32(0));
-        factory.createAgent(alice, 0, 0, bytes32(0)); // even naming alice as owner
+        factory.createAgent(mallory, 0, 0, bytes32(0), "", treasury, 2_000);
+        factory.createAgent(alice, 0, 0, bytes32(0), "", treasury, 2_000); // even naming alice as owner
         vm.stopPrank();
 
         vm.prank(alice);
-        (, address w) = factory.createAgent(alice, RUN_CAP, DAY_CAP, bytes32(0));
+        (, address w) = factory.createAgent(alice, RUN_CAP, DAY_CAP, bytes32(0), "", treasury, 2_000);
         assertEq(w, predicted);
         vm.prank(alice);
         AgentWallet(w).withdraw(address(usdg), alice, 10e6);
@@ -527,8 +527,8 @@ contract ReviewTest is Test {
 
     function test_review_reentrancy_through_token_cannot_exceed_caps() public {
         ReentrantToken rt = new ReentrantToken();
-        ZeroLuxFactory f2 = new ZeroLuxFactory(address(rt), admin, address(rt), treasury, 0);
-        (, address w) = f2.createAgent(alice, RUN_CAP, RUN_CAP, bytes32(0));
+        ZeroLuxFactory f2 = new ZeroLuxFactory(address(rt), admin, address(rt), treasury, 0, address(0));
+        (, address w) = f2.createAgent(alice, RUN_CAP, RUN_CAP, bytes32(0), "", f2.treasury(), f2.markupBps());
         rt.mint(w, 100e6);
         // The token itself is the operator here (worst case) and re-enters charge().
         rt.arm(AgentWallet(w), abi.encodeCall(AgentWallet.charge, ("second", uint256(RUN_CAP))));
@@ -541,7 +541,7 @@ contract ReviewTest is Test {
 
     function test_review_init_cannot_be_reached_after_creation_and_zero_owner_reverts() public {
         vm.expectRevert(AgentWallet.ZeroAddress.selector);
-        factory.createAgent(address(0), 1, 1, bytes32(0));
+        factory.createAgent(address(0), 1, 1, bytes32(0), "", treasury, 2_000);
         assertEq(factory.agentCount(), 1); // nothing registered by the failed call
         vm.prank(address(factory));
         vm.expectRevert(AgentWallet.AlreadyInitialised.selector);

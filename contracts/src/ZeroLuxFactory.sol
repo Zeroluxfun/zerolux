@@ -3,6 +3,13 @@ pragma solidity ^0.8.26;
 
 import {AgentWallet} from "./AgentWallet.sol";
 
+/// @dev The ERC-8004 identity registry: one token per agent, pointing at its card.
+interface IIdentityRegistry {
+    function register(string calldata agentURI) external returns (uint256 agentId);
+    function transferFrom(address from, address to, uint256 tokenId) external;
+    function ownerOf(uint256 tokenId) external view returns (address);
+}
+
 /// @title ZeroLuxFactory
 /// @notice Registers agents and deploys one wallet per agent. Holds the three
 ///         settings every wallet reads: who may meter runs (operator), where
@@ -18,6 +25,7 @@ contract ZeroLuxFactory {
 
     address public immutable usdg;
     address public immutable walletImplementation;
+    address public immutable identityRegistry; // ERC-8004; zero if this chain has none
 
     address public owner;
     address public pendingOwner;
@@ -32,13 +40,18 @@ contract ZeroLuxFactory {
         address creator;
         bytes32 specHash; // hash of the agent's published spec
         uint64 createdAt;
+        bool hasIdentity;
+        uint256 identityId; // its ERC-8004 id, when hasIdentity
     }
+
+    bool private _registering;
 
     Agent[] private _agents;
     mapping(address wallet => uint256 idPlusOne) public agentIdOf;
     mapping(address creator => uint256 count) public createdBy;
 
     event AgentCreated(uint256 indexed id, address indexed wallet, address indexed creator, bytes32 specHash);
+    event IdentityRegistered(uint256 indexed id, uint256 indexed identityId);
     event OperatorSet(address indexed operator);
     event MarkupSet(uint16 markupBps);
     event TreasuryProposed(address indexed treasury, uint256 effectiveAt);
@@ -51,18 +64,28 @@ contract ZeroLuxFactory {
     error MarkupTooHigh();
     error TooEarly();
     error NothingPending();
+    error TermsChanged();
+    error BadIdentity();
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
         _;
     }
 
-    constructor(address usdg_, address owner_, address operator_, address treasury_, uint16 markupBps_) {
+    constructor(
+        address usdg_,
+        address owner_,
+        address operator_,
+        address treasury_,
+        uint16 markupBps_,
+        address identityRegistry_
+    ) {
         if (usdg_ == address(0) || owner_ == address(0) || operator_ == address(0) || treasury_ == address(0)) {
             revert ZeroAddress();
         }
         if (markupBps_ > MAX_MARKUP_BPS) revert MarkupTooHigh();
         usdg = usdg_;
+        identityRegistry = identityRegistry_;
         owner = owner_;
         operator = operator_;
         treasury = treasury_;
@@ -75,16 +98,46 @@ contract ZeroLuxFactory {
     }
 
     /// @notice Anyone may put an agent on the line. `agentOwner` owns its wallet.
-    function createAgent(address agentOwner, uint128 perRunCap, uint128 perDayCap, bytes32 specHash)
-        external
-        returns (uint256 id, address wallet)
-    {
+    ///         The wallet takes the factory's treasury and markup as they stand;
+    ///         the call fails if they are not what the caller expects.
+    ///         Pass an `agentURI` to also give it an ERC-8004 identity, owned by
+    ///         `agentOwner`; pass an empty string to skip that.
+    function createAgent(
+        address agentOwner,
+        uint128 perRunCap,
+        uint128 perDayCap,
+        bytes32 specHash,
+        string calldata agentURI,
+        address expectedTreasury,
+        uint16 expectedMarkupBps
+    ) external returns (uint256 id, address wallet) {
+        // The wallet keeps these for life, so the caller names what they expect.
+        if (treasury != expectedTreasury || markupBps != expectedMarkupBps) revert TermsChanged();
         id = _agents.length;
         wallet = _clone(walletImplementation, keccak256(abi.encode(msg.sender, createdBy[msg.sender]++)));
         AgentWallet(wallet).init(agentOwner, perRunCap, perDayCap);
-        _agents.push(Agent(wallet, msg.sender, specHash, uint64(block.timestamp)));
+        _agents.push(Agent(wallet, msg.sender, specHash, uint64(block.timestamp), false, 0));
         agentIdOf[wallet] = id + 1;
         emit AgentCreated(id, wallet, msg.sender, specHash);
+
+        if (bytes(agentURI).length != 0 && identityRegistry != address(0)) {
+            _registering = true;
+            uint256 identityId = IIdentityRegistry(identityRegistry).register(agentURI);
+            _registering = false;
+            if (IIdentityRegistry(identityRegistry).ownerOf(identityId) != address(this)) revert BadIdentity();
+            IIdentityRegistry(identityRegistry).transferFrom(address(this), agentOwner, identityId);
+            _agents[id].hasIdentity = true;
+            _agents[id].identityId = identityId;
+            emit IdentityRegistered(id, identityId);
+        }
+    }
+
+    /// @dev The registry mints the identity here before it is passed to the
+    ///      agent's owner. Safe transfers are refused at any other time. A token
+    ///      pushed here with a plain transfer cannot be recovered.
+    function onERC721Received(address, address, uint256, bytes calldata) external view returns (bytes4) {
+        if (!_registering || msg.sender != identityRegistry) revert NotOwner();
+        return 0x150b7a02;
     }
 
     function agentCount() external view returns (uint256) {
