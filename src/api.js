@@ -65,9 +65,11 @@ const WITH_RUNS = "SELECT a.*, (SELECT COUNT(*) FROM runs r WHERE r.agent_id = a
 export async function listAgents(env) {
   const rows = (await env.DB.prepare(WITH_RUNS + ' ORDER BY a.id DESC LIMIT 200').all()).results;
   await refresh(env, rows);
-  const agents = rows.map((a) => view(a, false));
-  const sum = (k) => agents.reduce((n, a) => n + BigInt(a.stats?.[k] || 0), 0n).toString();
-  return json({ agents, totals: { agents: agents.length, runs: agents.reduce((n, a) => n + a.runs, 0), income: sum('income'), profit: sum('profit') } }, 200, { 'cache-control': 'private, max-age=20' });
+  const all = rows.map((a) => view(a, false));
+  // A retired agent (replaced by a newer one) leaves the floor, but what it earned still counts.
+  const agents = all.filter((a) => a.status !== 'retired');
+  const sum = (k) => all.reduce((n, a) => n + BigInt(a.stats?.[k] || 0), 0n).toString();
+  return json({ agents, totals: { agents: agents.length, runs: all.reduce((n, a) => n + a.runs, 0), income: sum('income'), profit: sum('profit') } }, 200, { 'cache-control': 'private, max-age=20' });
 }
 
 export const findAgent = (env, id) => /^\d{1,9}$/.test(id) ? env.DB.prepare(WITH_RUNS + ' WHERE a.id = ?').bind(Number(id)).first() : null;
@@ -101,7 +103,7 @@ export async function card(env, hash) {
     active: a.status === 'live',
     registrations: a.identity_id ? [{ agentId: Number(a.identity_id), agentRegistry: `eip155:${CHAIN_ID}:${IDENTITY}` }] : [],
     supportedTrust: ['reputation'],
-    zerolux: { agent: a.id, wallet: a.wallet, factory: env.FACTORY, price: String(a.price), asset: USDG, specHash: a.spec_hash },
+    zerolux: { agent: a.id, wallet: a.wallet, factory: a.v === 2 ? env.FACTORY2 : env.FACTORY, price: String(a.price), asset: USDG, specHash: a.spec_hash },
   }, 200, { 'cache-control': 'public, max-age=300', 'access-control-allow-origin': '*' });
 }
 
@@ -109,7 +111,7 @@ export async function card(env, hash) {
 export function config(env) {
   const sel = (sig) => toFunctionSelector(sig);
   return json({
-    chainId: CHAIN_ID, chainName: 'Robinhood Chain', explorer: EXPLORER, usdg: USDG, factory: env.FACTORY, treasury: env.TREASURY,
+    chainId: CHAIN_ID, chainName: 'Robinhood Chain', explorer: EXPLORER, usdg: USDG, factory: env.FACTORY2 || env.FACTORY, factories: [env.FACTORY, env.FACTORY2].filter(Boolean), treasury: env.TREASURY,
     markupBps: Number(env.MARKUP_BPS), identity: IDENTITY, models: MODELS, tools: TOOLS,
     selectors: {
       withdraw: sel('withdraw(address,address,uint256)'), setLimits: sel('setLimits(uint128,uint128)'), setPaused: sel('setPaused(bool)'),
