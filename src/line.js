@@ -11,7 +11,7 @@ export const TOOLS = {
   fetch_url: 'Read a public web page',
   remember: 'Keep notes about each customer between runs',
 };
-const MAX_PRICE = 5_000_000; // $5
+const MAX_PRICE = 2_000_000; // $2
 
 export const json = (body, status = 200, headers = {}) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...headers } });
@@ -26,14 +26,26 @@ export async function allow(env, k, max) {
   return row.n <= max;
 }
 
-export const clientKey = (request) => request.headers.get('cf-connecting-ip') || 'local';
+// One key per visitor network: a whole IPv6 /64 counts as one address.
+export const clientKey = (request) => {
+  const ip = request.headers.get('cf-connecting-ip') || 'local';
+  return ip.includes(':') ? ip.split(':').slice(0, 4).join(':') : ip;
+};
 
-export async function chat(env, body) {
+// Body of a JSON POST, or null. Refusing other content types stops another site's page from posting here unasked.
+export async function readJson(request, max = 20_000) {
+  if (!(request.headers.get('content-type') || '').toLowerCase().startsWith('application/json')) return null;
+  const text = await request.text().catch(() => '');
+  if (text.length > max) return null;
+  try { return JSON.parse(text); } catch { return null; }
+}
+
+export async function chat(env, body, timeoutMs = 60_000) {
   const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
     headers: { authorization: 'Bearer ' + env.OPENROUTER_KEY, 'content-type': 'application/json', 'x-title': 'Zero Lux' },
     body: JSON.stringify({ ...body, usage: { include: true } }),
-    signal: AbortSignal.timeout(60_000),
+    signal: AbortSignal.timeout(Math.max(1_000, timeoutMs)),
   });
   if (!res.ok) throw new Error('model provider answered ' + res.status);
   const out = await res.json();
@@ -85,7 +97,7 @@ Refuse (reply {"refuse": "one sentence why"}) if the job is illegal, is harassme
 
 // POST /api/line {job}
 export async function line(request, env) {
-  let body; try { body = await request.json(); } catch { return json({ error: 'bad request' }, 400); }
+  const body = await readJson(request); if (!body) return json({ error: 'Send JSON.' }, 400);
   const job = clip(body?.job, 1200);
   if (job.length < 12) return json({ error: 'Describe the job in a sentence or two.' }, 400);
   if (!(await allow(env, 'line:' + clientKey(request), 12))) return json({ error: 'That is enough drafts for today. Come back tomorrow.' }, 429);
@@ -111,7 +123,7 @@ export async function line(request, env) {
 // POST /api/agents {draft, owner, price?}: put a drafted agent on chain.
 // The factory pays the gas; the owner address owns the wallet from the first block.
 export async function createAgent(request, env) {
-  let body; try { body = await request.json(); } catch { return json({ error: 'bad request' }, 400); }
+  const body = await readJson(request); if (!body) return json({ error: 'Send JSON.' }, 400);
   const owner = String(body?.owner || '');
   if (!isAddress(owner) || /^0x0{40}$/i.test(owner)) return json({ error: 'Enter the wallet address that should own this agent.' }, 400);
   const row = await env.DB.prepare('SELECT spec FROM drafts WHERE spec_hash = ?').bind(String(body?.draft || '')).first();
@@ -126,14 +138,25 @@ export async function createAgent(request, env) {
   if (!(await allow(env, 'create:' + clientKey(request), 4))) return json({ error: 'You have put enough agents on the line today.' }, 429);
   if (!(await allow(env, 'create:all', 150))) return json({ error: 'The line is at capacity today.' }, 429);
 
+  // Claim this spec before sending, so two requests at once cannot both put it on chain.
+  const claim = await env.DB.prepare("INSERT OR IGNORE INTO limits (k, day, n) VALUES (?, '9999-12-31', 1)").bind('claim:' + hash).run();
+  if (!claim.meta.changes) return json({ error: 'This agent is already being put on the line.' }, 409);
+  const unclaim = () => env.DB.prepare("DELETE FROM limits WHERE k = ? AND day = '9999-12-31'").bind('claim:' + hash).run();
+
   const perRunCap = BigInt(spec.price); // a run can never cost the agent more than one call earns
   const perDayCap = BigInt(Math.max(spec.price * 200, 10_000_000));
   const uri = `https://zerolux.fun/card/${hash}.json`;
-  const tx = await signer(env).send({
-    to: env.FACTORY, abi: 'factory', functionName: 'createAgent',
-    args: [getAddress(owner), perRunCap, perDayCap, hash, uri, env.TREASURY, Number(env.MARKUP_BPS)],
-  });
-  if (!tx.ok) return json({ error: 'The chain did not take it. Try again in a minute.' }, 502);
+  let tx;
+  try {
+    tx = await signer(env).send({
+      to: env.FACTORY, abi: 'factory', functionName: 'createAgent',
+      args: [getAddress(owner), perRunCap, perDayCap, hash, uri, env.TREASURY, Number(env.MARKUP_BPS)],
+    });
+  } catch { tx = { ok: false, stage: 'rpc' }; }
+  if (!tx.ok) {
+    if (tx.stage === 'revert') await unclaim(); // nothing happened; it can be tried again
+    return json({ error: 'The chain did not take it. Try again in a minute.' }, 502);
+  }
 
   let id, wallet, identity = null;
   for (const l of tx.logs) {

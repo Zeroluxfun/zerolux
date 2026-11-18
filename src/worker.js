@@ -1,5 +1,5 @@
 // Zero Lux Worker: the site, the line (job to agent), paid runs, the floor, MCP.
-import { line, createAgent, json } from './line.js';
+import { line, createAgent, json, allow, clientKey } from './line.js';
 import { hire, sweep } from './run.js';
 import { listAgents, findAgent, getAgent, card, config } from './api.js';
 import { mcp } from './mcp.js';
@@ -32,8 +32,10 @@ function gate(request, env, url) {
 }
 
 async function waitlist(request, env) {
-  if (Number(request.headers.get('content-length') || 0) > 2000) return Response.json({ error: 'too large' }, { status: 413 });
-  let body; try { body = await request.json(); } catch { return Response.json({ error: 'bad request' }, { status: 400 }); }
+  const text = await request.text().catch(() => '');
+  if (text.length > 2000) return Response.json({ error: 'too large' }, { status: 413 });
+  let body; try { body = JSON.parse(text); } catch { return Response.json({ error: 'bad request' }, { status: 400 }); }
+  if (!(await allow(env, 'wl:' + clientKey(request), 8))) return Response.json({ error: 'Too many tries today.' }, { status: 429 });
   const email = String(body?.email || '').trim().toLowerCase();
   if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) return Response.json({ error: 'invalid email' }, { status: 400 });
   await env.DB.prepare('INSERT OR IGNORE INTO waitlist (email, created_at, source) VALUES (?, ?, ?)').bind(email, new Date().toISOString(), 'web').run();
@@ -46,7 +48,9 @@ const open = (res) => { const h = new Headers(res.headers); h.set('access-contro
 // Everything the factory does. Until PRODUCT is "on" these routes answer only
 // to a browser holding the build key (open any of them once with ?build=<key>).
 async function routeProduct(request, env, ctx, url) {
-  const p = url.pathname;
+  // Compare on the decoded, single-slashed, lower-case path so no spelling of a gated address slips past.
+  let p; try { p = decodeURIComponent(url.pathname); } catch { return simple('Not found: Zero Lux', 'Nothing at this address.', 404); }
+  p = p.replace(/\/{2,}/g, '/').replace(/(.)\/$/, '$1').toLowerCase();
   const m = p.match(/^\/a\/(\d{1,9})(\/run)?$/);
   const isProduct = p === '/api/line' || p.startsWith('/api/agents') || p === '/api/config' || p.startsWith('/card/') || p === '/mcp' || p === '/skill.md' || p in PAGES || m || ['/create.html', '/floor.html', '/agent.html', '/agent', '/app.js', '/app.css'].includes(p);
   if (!isProduct) return null;
@@ -54,10 +58,12 @@ async function routeProduct(request, env, ctx, url) {
   if (env.PRODUCT !== 'on' && !p.startsWith('/card/')) {
     const cookie = request.headers.get('cookie') || '';
     const key = env.BUILD_KEY;
-    const ok = key && (cookie.split(/;\s*/).includes('zl_build=' + key) || request.headers.get('x-build-key') === key);
+    // The cookie holds a hash of the key, never the key itself.
+    const pass = key ? [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode('zl-build:' + key)))].map((b) => b.toString(16).padStart(2, '0')).join('') : '';
+    const ok = key && (cookie.split(/;\s*/).includes('zl_build=' + pass) || request.headers.get('x-build-key') === key);
     if (key && url.searchParams.get('build') === key) {
       url.searchParams.delete('build');
-      return new Response(null, { status: 302, headers: { location: url.pathname + url.search, 'set-cookie': `zl_build=${key}; Path=/; Max-Age=2592000; Secure; HttpOnly; SameSite=Lax`, 'cache-control': 'no-store' } });
+      return new Response(null, { status: 302, headers: { location: url.pathname + url.search, 'set-cookie': `zl_build=${pass}; Path=/; Max-Age=2592000; Secure; HttpOnly; SameSite=Lax`, 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' } });
     }
     if (!ok) return simple('Not found: Zero Lux', 'Nothing at this address.', 404);
   }

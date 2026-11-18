@@ -63,7 +63,7 @@ export async function listAgents(env) {
   await refresh(env, rows);
   const agents = rows.map((a) => view(a, false));
   const sum = (k) => agents.reduce((n, a) => n + BigInt(a.stats?.[k] || 0), 0n).toString();
-  return json({ agents, totals: { agents: agents.length, runs: agents.reduce((n, a) => n + a.runs, 0), income: sum('income'), profit: sum('profit') } }, 200, { 'cache-control': 'public, max-age=20' });
+  return json({ agents, totals: { agents: agents.length, runs: agents.reduce((n, a) => n + a.runs, 0), income: sum('income'), profit: sum('profit') } }, 200, { 'cache-control': 'private, max-age=20' });
 }
 
 export const findAgent = (env, id) => /^\d{1,9}$/.test(id) ? env.DB.prepare(WITH_RUNS + ' WHERE a.id = ?').bind(Number(id)).first() : null;
@@ -72,7 +72,7 @@ export const findAgent = (env, id) => /^\d{1,9}$/.test(id) ? env.DB.prepare(WITH
 export async function getAgent(env, a) {
   await refresh(env, [a]);
   const runs = (await env.DB.prepare("SELECT id, payer, paid, cost, status, pay_tx, charge_tx, created_at FROM runs WHERE agent_id = ? AND status IN ('ran', 'billed', 'unpaid') ORDER BY created_at DESC LIMIT 20").bind(a.id).all()).results;
-  return json({ agent: view(a, true), recent: runs }, 200, { 'cache-control': 'public, max-age=15' });
+  return json({ agent: view(a, true), recent: runs }, 200, { 'cache-control': 'private, max-age=15' });
 }
 
 // GET /card/<specHash>.json: the ERC-8004 registration file an identity points at.
@@ -108,5 +108,5 @@ export function config(env) {
       withdraw: sel('withdraw(address,address,uint256)'), setLimits: sel('setLimits(uint128,uint128)'), setPaused: sel('setPaused(bool)'),
       setLien: sel('setLien(address,uint16,uint128)'), settleLien: sel('settleLien()'), endLien: sel('endLien()'),
     },
-  }, 200, { 'cache-control': 'public, max-age=300' });
+  }, 200, { 'cache-control': 'private, max-age=300' });
 }

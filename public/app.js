@@ -154,8 +154,15 @@ async function pageAgent() {
       b.textContent = 'Confirm in your wallet…';
       const signature = await eth().request({ method: 'eth_signTypedData_v4', params: [from, JSON.stringify({ domain: sign.domain, primaryType: sign.primaryType, message, types: { EIP712Domain: [{ name: 'name', type: 'string' }, { name: 'version', type: 'string' }, { name: 'chainId', type: 'uint256' }, { name: 'verifyingContract', type: 'address' }], ...sign.types } })] });
       b.replaceChildren(el('span', { class: 'spin' }), ' Working…');
-      const r = await api(`/a/${id}/run`, { input }, { 'x-payment': btoa(JSON.stringify({ x402Version: 1, scheme: 'exact', network: 'eip155:' + cfg.chainId, payload: { authorization: message, signature } })) });
-      if (!r.ok) { if (r.data.retry) sessionStorage.setItem('zl-retry-' + id, r.data.retry); throw new Error(r.data.error || 'The run failed.'); }
+      // One signed payment buys one run. If we are told "again", the same payment is sent again; it is never charged twice.
+      const ticket = btoa(JSON.stringify({ x402Version: 1, scheme: 'exact', network: 'eip155:' + cfg.chainId, payload: { authorization: message, signature } }));
+      let r;
+      for (let tries = 0; tries < 8; tries++) {
+        r = await api(`/a/${id}/run`, { input }, { 'x-payment': ticket });
+        if (r.ok || !r.data.again) break;
+        await new Promise((s) => setTimeout(s, 5000));
+      }
+      if (!r.ok) throw new Error(r.data.error || 'The run failed.');
       $('#out').hidden = false; $('#out').textContent = r.data.output;
       $('#receipt').replaceChildren('Paid ' + usd(r.data.paid) + ' · ', tx(r.data.tx)); say('');
       setTimeout(load, 9000);

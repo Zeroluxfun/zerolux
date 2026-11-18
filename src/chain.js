@@ -66,6 +66,7 @@ export const usdgAbi = parseAbi([
   'function authorizationState(address authorizer, bytes32 nonce) view returns (bool)',
   'function transferWithAuthorization(address from, address to, uint256 value, uint256 validAfter, uint256 validBefore, bytes32 nonce, uint8 v, bytes32 r, bytes32 s)',
   'event Transfer(address indexed from, address indexed to, uint256 value)',
+  'event AuthorizationUsed(address indexed authorizer, bytes32 indexed nonce)',
 ]);
 
 // Error text from the RPC library can include the RPC address, which is a secret.
@@ -100,23 +101,54 @@ export class Signer extends DurableObject {
     try {
       gas = await pub.estimateGas({ account: account.address, to, data });
     } catch (e) {
-      return { ok: false, stage: 'simulate', error: why(e) };
+      // Only a revert from the contract itself means "refused". A timeout, a rate
+      // limit or an empty gas tank is our problem and must never be read as one.
+      const reverted = !!e?.walk?.((x) => x?.name === 'ExecutionRevertedError' || x?.name === 'ContractFunctionRevertedError');
+      return { ok: false, stage: reverted ? 'revert' : 'rpc', error: why(e) };
     }
     let hash;
     try {
       hash = await wal.sendTransaction({ to, data, gas: (gas * 13n) / 10n });
     } catch (e) {
-      return { ok: false, stage: 'send', error: why(e) };
+      return { ok: false, stage: 'rpc', error: why(e) };
     }
     try {
       const r = await pub.waitForTransactionReceipt({ hash, pollingInterval: 700, timeout: 45_000 });
       return {
-        ok: r.status === 'success', stage: 'mined', hash,
+        ok: r.status === 'success', stage: r.status === 'success' ? 'mined' : 'revert', hash,
         logs: r.logs.map((l) => ({ address: l.address, topics: l.topics, data: l.data })),
       };
     } catch (e) {
       return { ok: false, stage: 'wait', hash, error: why(e) };
     }
+  }
+
+  // Bill one run. Everything is read inside this object's one-at-a-time queue,
+  // right before sending, so no payment can slip between the reads and the charge:
+  // payments are submitted through this same queue and their rows exist before
+  // they are submitted.
+  bill(run) {
+    const job = this.queue.then(async () => {
+      let upTo = null;
+      try {
+        const row = await this.env.DB.prepare("SELECT COALESCE(SUM(paid), 0) AS n FROM runs WHERE agent_id = ? AND id != ? AND status IN ('paying', 'paid', 'running', 'ran')").bind(run.agent_id, run.id).first();
+        const c = reader(this.env);
+        const [profit, markup] = await Promise.all([
+          c.readContract({ address: run.wallet, abi: walletAbi, functionName: 'profit' }),
+          c.readContract({ address: run.wallet, abi: walletAbi, functionName: 'markupBps' }),
+        ]);
+        const cost = BigInt(run.cost);
+        // Final profit once this run is billed: today's, less this charge, less money held for runs still to bill.
+        upTo = profit - cost - (cost * BigInt(markup)) / 10_000n - BigInt(row.n);
+        if (upTo < 0n) upTo = 0n;
+      } catch { upTo = null; }
+      // If the figure could not be worked out, charge without moving the checkpoint at all.
+      return upTo === null
+        ? this._send({ to: run.wallet, abi: 'wallet', functionName: 'charge', args: [run.id, BigInt(run.cost)] })
+        : this._send({ to: run.wallet, abi: 'wallet', functionName: 'chargeAndSettle', args: [run.id, BigInt(run.cost), upTo] });
+    });
+    this.queue = job.catch(() => {});
+    return job;
   }
 
   async address() {

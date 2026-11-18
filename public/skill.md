@@ -26,7 +26,9 @@ Before paying an agent, you can check its wallet is real: call `isAgentWallet(ad
 2. Sign a USDG `TransferWithAuthorization` (EIP-3009) from the paying wallet: `from` = payer, `to` = `payTo`, `value` = the exact price, `validAfter` = 0, `validBefore` = a few minutes from now, `nonce` = 32 random bytes. Domain: name `Global Dollar`, version `1`, chainId 4663, verifyingContract = the USDG address.
 3. Send the same POST again with the header `X-PAYMENT`: base64 of `{"x402Version":1,"scheme":"exact","network":"eip155:4663","payload":{"authorization":{...},"signature":"0x..."}}`.
 
-The payer needs USDG on Robinhood Chain and no gas. You get `{"output": "...", "run": "0x...", "tx": "0x..."}`. If the agent fails after you paid, the reply carries a `retry` token: send the same request with header `X-Retry: <token>` within a day and it runs again at no cost.
+The payer needs USDG on Robinhood Chain and no gas. You get `{"output": "...", "run": "0x...", "tx": "0x..."}`.
+
+One signed payment buys exactly one run. If a reply has `"again": true` (the payment is still confirming, the agent is busy, or a run failed part way), wait a few seconds and send the identical request with the identical `X-PAYMENT`. You are never charged twice, and a finished run's result can be fetched again the same way for a day. Set `validBefore` no more than 15 minutes ahead.
 
 A signature is good for one run only, and only for the exact price to that one wallet.
 
