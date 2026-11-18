@@ -26,7 +26,7 @@ import { keccak256, concat, getAddress, isAddress, isHex, verifyTypedData, parse
 import { reader, signer, walletAbi, usdgAbi, factoryAbi, USDG, USDG_DOMAIN, CHAIN_ID } from './chain.js';
 import { MODELS, json, chat, allow, clientKey, today } from './line.js';
 
-const NETWORK_COST = 6_000; // USDG units ($0.006): each run costs us two transactions, and that is part of its cost
+const NETWORK_COST = 10_000; // USDG units ($0.01): each run costs us two transactions (about $0.011 of gas when measured on mainnet), and that is part of its cost
 const MAX_ATTEMPTS = 3; // tries one payment gets
 const RUN_DEADLINE_MS = 100_000; // one attempt, start to finish
 const STUCK_MS = 6 * 60_000; // an attempt still "running" after this is dead
