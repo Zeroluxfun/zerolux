@@ -1,7 +1,7 @@
 // Zero Lux Worker: the site, the line (job to agent), paid runs, the floor, MCP.
 import { line, createAgent, json, allow, clientKey } from './line.js';
 import { hire, sweep } from './run.js';
-import { listAgents, findAgent, getAgent, card, config } from './api.js';
+import { listAgents, findAgent, getAgent, getRun, card, config } from './api.js';
 import { mcp } from './mcp.js';
 export { Signer } from './chain.js';
 
@@ -53,7 +53,7 @@ async function routeProduct(request, env, ctx, url) {
   let p; try { p = decodeURIComponent(url.pathname); } catch { return simple('Not found: Zero Lux', 'Nothing at this address.', 404); }
   p = p.replace(/\/{2,}/g, '/').replace(/(.)\/$/, '$1').toLowerCase();
   const m = p.match(/^\/a\/(\d{1,9})(\/run)?$/);
-  const isProduct = p === '/api/line' || p.startsWith('/api/agents') || p === '/api/config' || p.startsWith('/card/') || p === '/mcp' || p === '/skill.md' || p in PAGES || m || ['/create.html', '/floor.html', '/agent.html', '/connect.html', '/docs.html', '/roadmap.html', '/security.html', '/agent', '/app.js', '/app.css'].includes(p);
+  const isProduct = p === '/api/line' || p.startsWith('/api/agents') || p.startsWith('/api/runs/') || p === '/api/config' || p.startsWith('/card/') || p === '/mcp' || p === '/skill.md' || p in PAGES || m || ['/create.html', '/floor.html', '/agent.html', '/connect.html', '/docs.html', '/roadmap.html', '/security.html', '/agent', '/app.js', '/app.css'].includes(p);
   if (!isProduct) return null;
   // An agent's identity card is public from the moment its on-chain identity points at it.
   if (env.PRODUCT !== 'on' && !p.startsWith('/card/')) {
@@ -80,6 +80,7 @@ async function routeProduct(request, env, ctx, url) {
   if (!env.FACTORY || !env.OPERATOR_KEY || !env.RPC_URL) return json({ error: 'The factory is not switched on yet.' }, 503);
   try {
     if (p === '/api/config') return config(env);
+    if (p.startsWith('/api/runs/')) { const r = await getRun(env, p.slice(10)); return r ? open(json(r, 200, { 'cache-control': 'public, max-age=30' })) : json({ error: 'No paid run with that id.' }, 404); }
     if (p === '/api/line') return request.method === 'POST' ? line(request, env) : new Response(null, { status: 405 });
     if (p === '/api/agents') return request.method === 'POST' ? createAgent(request, env) : open(await listAgents(env));
     if (p.startsWith('/api/agents/')) { const a = await findAgent(env, p.slice(12)); return a ? open(await getAgent(env, a)) : json({ error: 'not found' }, 404); }

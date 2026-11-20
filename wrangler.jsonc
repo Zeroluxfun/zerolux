@@ -10,7 +10,7 @@
   // FACTORY (version 1) and FACTORY2 (version 2, where new agents are made) and TREASURY are the contracts on Robinhood Chain (4663). PRODUCT "on" means the factory is open to everyone;
   // set it to "off" to put the factory routes back behind the build key.
   // Secrets: OPERATOR_KEY, RPC_URL, OPENROUTER_KEY, BUILD_KEY.
-  "vars": { "FACTORY": "0xc9C8b726e73c78eb688e19f0b686CbBDE9F0985B", "FACTORY2": "0xd2c83835f26Da34059e2156FD725F436444D224A", "TREASURY": "0xd6c53788C600fB99051417ab72E07E42eE5112C7", "MARKUP_BPS": "2000", "PRODUCT": "on" },
+  "vars": { "HOUSE_PAYERS": "0xf07E0d9409A8610ef5E2C44BC03A65D6D27547DF", "FACTORY": "0xc9C8b726e73c78eb688e19f0b686CbBDE9F0985B", "FACTORY2": "0xd2c83835f26Da34059e2156FD725F436444D224A", "TREASURY": "0xd6c53788C600fB99051417ab72E07E42eE5112C7", "MARKUP_BPS": "2000", "PRODUCT": "on" },
   "routes": [
     { "pattern": "zerolux.fun", "custom_domain": true },
     { "pattern": "www.zerolux.fun", "custom_domain": true }

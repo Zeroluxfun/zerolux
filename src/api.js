@@ -3,6 +3,7 @@
 import { getAddress, toFunctionSelector } from 'viem';
 import { reader, walletAbi, usdgAbi, registryAbi, USDG, CHAIN_ID, EXPLORER, IDENTITY } from './chain.js';
 import { json, MODELS, TOOLS } from './line.js';
+import { RATES, NETWORK_COST } from './run.js';
 
 const address = (a) => String(a.wallet).toLowerCase();
 const FRESH_MS = 60_000; // chain figures are re-read at most once a minute per agent
@@ -53,10 +54,50 @@ function view(a, full) {
   const v = {
     id: a.id, name: a.name, tagline: spec.tagline, price: String(a.price), model: MODELS[spec.model]?.label, tools: spec.tools,
     wallet: a.wallet, owner: a.owner, status: a.status, identity: a.identity_id, created_at: a.created_at, version: a.v || 1,
-    runs: a.runs ?? 0, stats: a.stats ? JSON.parse(a.stats) : null, stats_at: a.stats_at,
+    runs: a.runs ?? 0, stats: a.stats ? JSON.parse(a.stats) : null, stats_at: a.stats_at, customers: a.customers || null,
   };
   if (full) Object.assign(v, { job: spec.job, instructions: spec.instructions, input_hint: spec.input_hint, spec_hash: a.spec_hash, create_tx: a.create_tx });
   return v;
+}
+
+// Who has paid each agent. An owner can pay their own agent to make its income look bigger, so the books say how
+// much came from the owner, from whoever holds a pledge, and from Zero Lux's own test wallets, and how concentrated the rest is.
+const PAID = "('ran', 'billed', 'unpaid')";
+async function customers(env, rows) {
+  const house = String(env.HOUSE_PAYERS || '').toLowerCase().split(',').map((x) => x.trim()).filter(Boolean);
+  const paid = (await env.DB.prepare(`SELECT agent_id, payer, SUM(paid) AS total, COUNT(*) AS n FROM runs WHERE status IN ${PAID} GROUP BY agent_id, payer`).all()).results;
+  for (const a of rows) {
+    const mine = paid.filter((p) => p.agent_id === a.id);
+    const stats = a.stats ? JSON.parse(a.stats) : null;
+    const inside = new Set([String(a.owner).toLowerCase(), String(stats?.lien?.payee || '').toLowerCase(), ...house]);
+    const all = mine.reduce((n, p) => n + p.total, 0);
+    const own = mine.filter((p) => inside.has(String(p.payer).toLowerCase())).reduce((n, p) => n + p.total, 0);
+    const outside = mine.filter((p) => !inside.has(String(p.payer).toLowerCase())).sort((x, y) => y.total - x.total);
+    const ext = all - own;
+    a.customers = {
+      payers: mine.length, outside_payers: outside.length, paid: String(all), from_insiders: String(own), from_outside: String(ext),
+      top_outside_share: ext ? Math.round((outside[0].total / ext) * 100) : null,
+      top5_outside_share: ext ? Math.round((outside.slice(0, 5).reduce((n, p) => n + p.total, 0) / ext) * 100) : null,
+    };
+  }
+}
+
+// GET /api/runs/{id}: the public receipt for one paid run. Anyone can recompute the charge from it.
+export async function getRun(env, id) {
+  if (!/^0x[0-9a-f]{64}$/i.test(id)) return null;
+  const r = await env.DB.prepare(`SELECT r.id, r.agent_id, r.payer, r.paid, r.cost, r.status, r.pay_tx, r.charge_tx, r.attempts, r.tokens_in, r.tokens_out, r.input_hash, r.output_hash, r.created_at, r.finished_at, a.name, a.wallet, a.spec, a.spec_hash FROM runs r JOIN agents a ON a.id = r.agent_id WHERE r.id = ? AND r.status IN ${PAID}`).bind(id.toLowerCase()).first();
+  if (!r) return null;
+  const spec = JSON.parse(r.spec), model = spec.model in RATES ? spec.model : 'fast', markup = Number(env.MARKUP_BPS);
+  const fee = r.cost == null ? null : Math.floor((r.cost * markup) / 1e4);
+  return {
+    run: r.id, status: r.status, agent: { id: r.agent_id, name: r.name, wallet: r.wallet, spec_hash: r.spec_hash },
+    payer: r.payer, paid: String(r.paid), payment_tx: r.pay_tx, charge_tx: r.charge_tx, created_at: r.created_at, finished_at: r.finished_at,
+    model: MODELS[model].id, attempts: r.attempts, tokens_in: r.tokens_in, tokens_out: r.tokens_out, rates: RATES[model],
+    // cost = what the model calls cost (never less than tokens x rates) + the network charge; the wallet is charged cost + fee.
+    network_cost: String(NETWORK_COST), cost: r.cost == null ? null : String(r.cost), markup_bps: markup, fee: fee == null ? null : String(fee),
+    charged_to_wallet: fee == null ? null : String(r.cost + fee), input_hash: r.input_hash, output_hash: r.output_hash,
+    note: 'Amounts are USDG units (six decimals). Hashes are SHA-256 of the exact input and output text. Runs made before receipts existed have no token counts or hashes.',
+  };
 }
 
 const WITH_RUNS = "SELECT a.*, (SELECT COUNT(*) FROM runs r WHERE r.agent_id = a.id AND r.status IN ('ran', 'billed', 'unpaid')) AS runs FROM agents a";
@@ -65,6 +106,7 @@ const WITH_RUNS = "SELECT a.*, (SELECT COUNT(*) FROM runs r WHERE r.agent_id = a
 export async function listAgents(env) {
   const rows = (await env.DB.prepare(WITH_RUNS + ' ORDER BY a.id DESC LIMIT 200').all()).results;
   await refresh(env, rows);
+  await customers(env, rows);
   const all = rows.map((a) => view(a, false));
   // A retired agent (replaced by a newer one) leaves the floor, but what it earned still counts.
   const agents = all.filter((a) => a.status !== 'retired');
@@ -77,6 +119,7 @@ export const findAgent = (env, id) => /^\d{1,9}$/.test(id) ? env.DB.prepare(WITH
 // GET /api/agents/:id
 export async function getAgent(env, a) {
   await refresh(env, [a]);
+  await customers(env, [a]);
   const runs = (await env.DB.prepare("SELECT id, payer, paid, cost, status, pay_tx, charge_tx, created_at FROM runs WHERE agent_id = ? AND status IN ('ran', 'billed', 'unpaid') ORDER BY created_at DESC LIMIT 20").bind(a.id).all()).results;
   return json({ agent: view(a, true), recent: runs }, 200, { 'cache-control': 'private, max-age=15' });
 }
@@ -113,6 +156,8 @@ export function config(env) {
   return json({
     chainId: CHAIN_ID, chainName: 'Robinhood Chain', explorer: EXPLORER, usdg: USDG, factory: env.FACTORY2 || env.FACTORY, factories: [env.FACTORY, env.FACTORY2].filter(Boolean), treasury: env.TREASURY,
     markupBps: Number(env.MARKUP_BPS), identity: IDENTITY, models: MODELS, tools: TOOLS,
+    // What a run is charged: tokens in and out at these rates (USDG units, six decimals, per token), plus the network charge, plus the markup.
+    rates: RATES, networkCost: NETWORK_COST,
     selectors: {
       withdraw: sel('withdraw(address,address,uint256)'), setLimits: sel('setLimits(uint128,uint128)'), setPaused: sel('setPaused(bool)'),
       setLien: sel('setLien(address,uint16,uint128)'), settleLien: sel('settleLien()'), endLien: sel('endLien()'),

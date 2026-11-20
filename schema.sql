@@ -27,3 +27,4 @@ CREATE INDEX IF NOT EXISTS memory_who ON memory (agent_id, payer);
 CREATE TABLE IF NOT EXISTS limits (k TEXT NOT NULL, day TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (k, day));
 -- agents.v is the wallet version (1 or 2), agents.chain_id the agent's number at its own factory, runs.held whether a
 -- version 2 wallet has the run's cost set aside. Databases made before these existed got them by ALTER TABLE ADD COLUMN.
+-- runs.tokens_in / tokens_out / input_hash / output_hash feed the public receipt at /api/runs/{id}; added by ALTER TABLE on 2026-11-20.

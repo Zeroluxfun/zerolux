@@ -125,6 +125,7 @@ async function pageAgent() {
     $('#name').textContent = A.name; $('#tag').textContent = A.tagline || A.job;
     $('#chips').replaceChildren(el('span', { class: 'chip hot', text: usd(A.price) + ' a call in USDG' }), el('span', { class: 'chip', text: A.model + ' model' }), ...A.tools.map((t) => el('span', { class: 'chip', text: cfg.tools[t] })), ...(A.identity ? [el('span', { class: 'chip', text: 'ERC-8004 #' + A.identity })] : []), ...(A.status !== 'live' ? [el('span', { class: 'chip', text: 'Off the line' })] : []));
     $('#l-income').textContent = usd(s.income); $('#l-cost').textContent = usd(s.charged); $('#l-profit').textContent = usd(s.profit); $('#l-runs').textContent = A.runs;
+    const who = A.customers; if (who) $('#l-who').textContent = who.payers ? `${who.outside_payers} outside ${who.outside_payers === 1 ? 'customer has' : 'customers have'} paid ${usd(who.from_outside)}${who.top_outside_share != null ? `, the largest of them ${who.top_outside_share}% of that` : ''}. ${usd(who.from_insiders)} came from the owner, a pledge holder or Zero Lux's own test wallet.` : 'No one has paid this agent yet.';
     $('#wallet').replaceChildren(addr(A.wallet)); $('#owner').replaceChildren(addr(A.owner));
     $('#input').placeholder = A.input_hint || 'What should it work on?'; $('#pay').textContent = 'Pay ' + usd(A.price) + ' and run'; $('#pay').disabled = A.status !== 'live';
     $('#instr').textContent = A.instructions;
@@ -134,7 +135,7 @@ async function pageAgent() {
       ? el('p', {}, `${lien.bps / 100}% of this unit's profit is pledged to `, addr(lien.payee), `. Paid so far ${usd(lien.paid)}${lien.cap !== '0' ? ' of ' + usd(lien.cap) : ', with no cap'}; ${usd(lien.unpaid)} waiting to be sent. `, el('button', { class: 'pill quiet sm', id: 'settle', text: 'Send it now' }))
       : el('p', { class: 'note', text: 'No share of this unit\'s profit is pledged. Its owner keeps all of it.' }));
     $('#settle')?.addEventListener('click', () => act('settleLien', ''));
-    $('#recent').replaceChildren(...(r.data.recent.length ? r.data.recent.map((x) => el('tr', {}, el('td', { text: x.created_at.slice(0, 16).replace('T', ' ') }), el('td', { class: 'mono', text: short(x.payer) }), el('td', { text: usd(x.paid) }), el('td', { text: x.cost == null ? '' : usd(Math.round(x.cost * (1 + cfg.markupBps / 1e4))) }), el('td', {}, tx(x.pay_tx)))) : [el('tr', {}, el('td', { colspan: '5', class: 'note', text: 'No paid runs yet.' }))]));
+    $('#recent').replaceChildren(...(r.data.recent.length ? r.data.recent.map((x) => el('tr', {}, el('td', { text: x.created_at.slice(0, 16).replace('T', ' ') }), el('td', { class: 'mono', text: short(x.payer) }), el('td', { text: usd(x.paid) }), el('td', { text: x.cost == null ? '' : usd(Math.round(x.cost * (1 + cfg.markupBps / 1e4))) }), el('td', {}, tx(x.pay_tx)), el('td', {}, el('a', { href: '/api/runs/' + x.id, text: 'open', target: '_blank', rel: 'noopener' })))) : [el('tr', {}, el('td', { colspan: '6', class: 'note', text: 'No paid runs yet.' }))]));
     $('#o-avail').textContent = usd(s.withdrawable); $('#o-held').textContent = lien ? usd(BigInt(s.balance || 0) - BigInt(s.withdrawable || 0)) : usd(0);
     $('#pause').textContent = s.paused ? 'Resume runs' : 'Pause runs'; $('#pause').dataset.next = s.paused ? '0' : '1';
     $('#lienform').hidden = !!lien; $('#endlien').hidden = !lien;

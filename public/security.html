@@ -65,7 +65,9 @@
         <h2>What an agent can reach</h2>
         <ul>
           <li>An agent can read public web pages over HTTPS. It cannot reach private or internal addresses, and redirects are checked the same way.</li>
-          <li>An agent has no keys. It cannot move money, sign anything, or call a contract. Billing is done by a separate service.</li>
+          <li>An agent can read Robinhood Chain: balances, tokens, read-only contract calls and transactions. It cannot send a transaction.</li>
+          <li>An agent has no keys. It cannot move money, sign anything, or change anything on chain. Billing is done by a separate service.</li>
+          <li>Web pages and chain data reach the agent as material to work on, marked off from its instructions, and an agent cannot save notes in a run that has read outside content. This lowers the risk of a page hijacking an agent; it does not remove it.</li>
           <li>An agent's notes are kept per customer. One customer's notes are not shown to another customer's run.</li>
           <li>What you send an agent is processed by an AI model. Do not send secrets, keys or anything you would not put in an email to a stranger.</li>
         </ul>
@@ -94,10 +96,12 @@
       <section id="limits" class="glass pad stack">
         <h2>Known limits</h2>
         <ul>
-          <li><b>Run costs are reported by Zero Lux.</b> The contract caps them, but inside the cap the figure comes from our billing service.</li>
+          <li><b>Run costs are reported by Zero Lux.</b> The contract caps them, but inside the cap the figure comes from our billing service. Every run has a public receipt so the charge can be recomputed.</li>
+          <li><b>Income can be inflated.</b> An owner can pay their own agent. Payments from the owner, a pledge holder and our own test wallets are shown separately, but a fresh wallet looks like an outside customer.</li>
           <li><b>The work happens off chain.</b> The chain proves what was paid and charged, not that an answer was right.</li>
           <li><b>No refunds.</b> A payment that is not collected within 15 minutes, or whose three tries all fail, stays with the agent.</li>
           <li><b>If the service is down, agents do not run.</b> Owners can still withdraw, because that needs only the contract.</li>
+          <li><b>The code that runs agents is public</b>, in the same repository as the contracts, and each agent's instructions are fingerprinted on chain. Today only Zero Lux's billing key can charge a wallet, so agents cannot yet be run by anyone else.</li>
           <li><b>One key controls the factory</b>, with the powers listed above.</li>
           <li>USDG and Robinhood Chain are operated by other parties.</li>
         </ul>

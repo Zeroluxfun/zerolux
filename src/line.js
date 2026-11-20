@@ -9,6 +9,7 @@ export const MODELS = {
 };
 export const TOOLS = {
   fetch_url: 'Read a public web page',
+  read_chain: 'Read Robinhood Chain: balances, tokens, contracts and transactions',
   remember: 'Keep notes about each customer between runs',
 };
 const MAX_PRICE = 2_000_000; // $2
@@ -91,7 +92,7 @@ The user describes the job. Reply with ONLY a JSON object:
  "instructions": the full system prompt for the agent: its role, the steps it takes, what a finished answer contains, what it refuses, and how it formats output. 150-500 words. It must tell the agent to finish the job in one reply without asking follow-up questions.
  "input_hint": a short placeholder telling the customer what to send,
  "model": "fast" for simple lookups, rewriting, summarising, classification; "smart" for analysis, code, planning or anything a mistake would make costly,
- "tools": array from ["fetch_url","remember"]. fetch_url if the job needs live web pages. remember if knowing a returning customer helps,
+ "tools": array from ["fetch_url","read_chain","remember"]. fetch_url if the job needs live web pages. read_chain if the job needs facts from Robinhood Chain: what an address or token is, a balance, a read-only contract call, or what a transaction did. remember if knowing a returning customer helps,
  "price_usd": a fair price per call between 0.02 and 5
 }
 Refuse (reply {"refuse": "one sentence why"}) if the job is illegal, is harassment, is sexual content involving minors, tries to impersonate a real company or person, or asks the agent to move money or trade for people.`;
