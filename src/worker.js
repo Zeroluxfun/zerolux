@@ -43,7 +43,7 @@ async function waitlist(request, env) {
   return Response.json({ ok: true });
 }
 
-const PAGES = { '/create': '/create', '/floor': '/floor', '/connect': '/connect', '/docs': '/docs', '/roadmap': '/roadmap', '/security': '/security' }; // the asset layer serves x.html at /x
+const PAGES = { '/create': '/create', '/floor': '/floor', '/connect': '/connect', '/docs': '/docs', '/roadmap': '/roadmap', '/security': '/security', '/factory': '/factory' }; // the asset layer serves x.html at /x
 const open = (res) => { const h = new Headers(res.headers); h.set('access-control-allow-origin', '*'); h.set('access-control-expose-headers', 'payment-required, payment-response, x-payment-response, retry-after'); return new Response(res.body, { status: res.status, headers: h }); };
 
 // Everything the factory does. Until PRODUCT is "on" these routes answer only
@@ -53,7 +53,7 @@ async function routeProduct(request, env, ctx, url) {
   let p; try { p = decodeURIComponent(url.pathname); } catch { return simple('Not found: Zero Lux', 'Nothing at this address.', 404); }
   p = p.replace(/\/{2,}/g, '/').replace(/(.)\/$/, '$1').toLowerCase();
   const m = p.match(/^\/a\/(\d{1,9})(\/run)?$/);
-  const isProduct = p === '/api/line' || p.startsWith('/api/agents') || p.startsWith('/api/runs/') || p === '/api/config' || p.startsWith('/card/') || p === '/mcp' || p === '/skill.md' || p in PAGES || m || ['/create.html', '/floor.html', '/agent.html', '/connect.html', '/docs.html', '/roadmap.html', '/security.html', '/agent', '/app.js', '/app.css'].includes(p);
+  const isProduct = p === '/api/line' || p.startsWith('/api/agents') || p.startsWith('/api/runs/') || p === '/api/config' || p.startsWith('/card/') || p === '/mcp' || p === '/skill.md' || p in PAGES || m || ['/create.html', '/floor.html', '/agent.html', '/connect.html', '/docs.html', '/roadmap.html', '/security.html', '/factory.html', '/factory.js', '/vendor/three.module.min.js', '/agent', '/app.js', '/app.css'].includes(p);
   if (!isProduct) return null;
   // An agent's identity card is public from the moment its on-chain identity points at it.
   if (env.PRODUCT !== 'on' && !p.startsWith('/card/')) {
@@ -75,8 +75,8 @@ async function routeProduct(request, env, ctx, url) {
   if (p === '/agent') return simple('Not found: Zero Lux', 'Nothing at this address.', 404);
   if (p in PAGES) return page(PAGES[p]);
   if (m && !m[2] && request.method === 'GET') return env.FACTORY && !(await findAgent(env, m[1])) ? simple('Not found: Zero Lux', 'No unit with that number.', 404) : page('/agent');
-  if (['/app.js', '/app.css', '/skill.md'].includes(p)) return page(p);
-  if (['/create.html', '/floor.html', '/agent.html', '/connect.html', '/docs.html', '/roadmap.html', '/security.html'].includes(p)) return simple('Not found: Zero Lux', 'Nothing at this address.', 404);
+  if (['/app.js', '/app.css', '/skill.md', '/factory.js', '/vendor/three.module.min.js'].includes(p)) return page(p);
+  if (['/create.html', '/floor.html', '/agent.html', '/connect.html', '/docs.html', '/roadmap.html', '/security.html', '/factory.html'].includes(p)) return simple('Not found: Zero Lux', 'Nothing at this address.', 404);
   if (!env.FACTORY || !env.OPERATOR_KEY || !env.RPC_URL) return json({ error: 'The factory is not switched on yet.' }, 503);
   try {
     if (p === '/api/config') return config(env);
