@@ -120,6 +120,19 @@ export default {
     const h = secure(new Headers(res.headers));
     if (type.includes('text/html')) h.set('cache-control', 'public, max-age=300, no-transform');
     else if (p.startsWith('/fonts/') || p.startsWith('/media/')) h.set('cache-control', 'public, max-age=604800');
+    // Safari will not play a video unless the server answers partial requests, and the asset layer does not.
+    if (p.endsWith('.mp4') && res.status === 200) {
+      h.set('accept-ranges', 'bytes');
+      const m = /^bytes=(\d*)-(\d*)$/.exec(request.headers.get('range') || '');
+      if (m && (m[1] || m[2])) {
+        const all = await res.arrayBuffer(), size = all.byteLength;
+        const start = m[1] ? Number(m[1]) : Math.max(0, size - Number(m[2]));
+        const end = m[1] && m[2] ? Math.min(Number(m[2]), size - 1) : size - 1;
+        if (start >= size || start > end) return new Response(null, { status: 416, headers: { 'content-range': `bytes */${size}` } });
+        h.set('content-range', `bytes ${start}-${end}/${size}`); h.set('content-length', String(end - start + 1));
+        return new Response(all.slice(start, end + 1), { status: 206, headers: h });
+      }
+    }
     return new Response(res.body, { status: res.status, headers: h });
   },
 };
