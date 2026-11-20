@@ -10,12 +10,12 @@
   const io = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } }), { threshold: 0.14 });
   document.querySelectorAll('.rv').forEach((n) => io.observe(n));
 
-  // The hero print moves: the line carries the white-hot unit to the front, rests, and runs again.
+  // The hero print moves: the line runs without stopping and a clamp lifts each white-hot unit away.
   // Skipped for people who ask for less motion or less data; the still print stays in place.
   const loop = $('#heroloop');
   if (loop && !matchMedia('(prefers-reduced-motion: reduce)').matches && !navigator.connection?.saveData) {
     loop.addEventListener('playing', () => loop.classList.add('on'), { once: true });
-    loop.src = innerWidth * (window.devicePixelRatio || 1) > 1400 ? '/media/print-line-loop.mp4' : '/media/print-line-loop-720.mp4';
+    loop.src = innerWidth * (window.devicePixelRatio || 1) > 1400 ? '/media/print-line-run.mp4' : '/media/print-line-run-720.mp4';
     loop.play().catch(() => {});
   }
 
