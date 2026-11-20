@@ -1,80 +1,64 @@
-// Zero Lux page behaviour: nav state, reveals, hero depth, waitlist forms.
+// Zero Lux home page: reveals, the job box, live readings and floor read from the chain, the belt, the email form.
 (() => {
   const root = document.documentElement;
   root.classList.add('js');
-  const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
-
-  const nav = document.querySelector('.nav');
-  const onScroll = () => nav.classList.toggle('solid', scrollY > 24);
-  addEventListener('scroll', onScroll, { passive: true }); onScroll();
-
   requestAnimationFrame(() => root.classList.add('lit'));
+  const $ = (s) => document.querySelector(s);
+  const usd = (n) => '$' + (Number(n || 0) / 1e6).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const el = (tag, props = {}, ...kids) => { const e = Object.assign(document.createElement(tag), props); kids.forEach((k) => e.append(k)); return e; };
 
   const io = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } }), { threshold: 0.14 });
-  document.querySelectorAll('.rv').forEach((el) => io.observe(el));
+  document.querySelectorAll('.rv').forEach((n) => io.observe(n));
 
-  // The wordmark drifts a little against the machinery in front of it.
-  const hero = document.querySelector('.hero');
-  const word = document.querySelector('.word');
-  if (hero && word && !still && matchMedia('(pointer: fine)').matches) {
-    let tx = 0, ty = 0, x = 0, y = 0, raf = 0;
-    const tick = () => {
-      x += (tx - x) * 0.07; y += (ty - y) * 0.07;
-      word.style.setProperty('--dx', x.toFixed(2) + 'px');
-      word.style.setProperty('--dy', y.toFixed(2) + 'px');
-      raf = Math.abs(tx - x) + Math.abs(ty - y) > 0.05 ? requestAnimationFrame(tick) : 0;
-    };
-    hero.addEventListener('pointermove', (e) => {
-      const r = hero.getBoundingClientRect();
-      tx = ((e.clientX - r.left) / r.width - 0.5) * -34;
-      ty = ((e.clientY - r.top) / r.height - 0.5) * -16;
-      if (!raf) raf = requestAnimationFrame(tick);
-    });
+  // The job box: it grows with the text, Enter sends it to the line, the examples fill it.
+  const job = $('#job');
+  if (job) {
+    const fit = () => { job.style.height = '52px'; job.style.height = Math.min(160, job.scrollHeight) + 'px'; };
+    job.addEventListener('input', fit);
+    job.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (job.value.trim()) job.form.requestSubmit(); } });
+    document.querySelectorAll('[data-job]').forEach((b) => b.addEventListener('click', () => { job.value = b.dataset.job; fit(); job.focus(); }));
   }
 
-  // Glass panels: the highlight follows the pointer.
-  if (matchMedia('(pointer: fine)').matches) {
-    document.querySelectorAll('.glass').forEach((el) => el.addEventListener('pointermove', (e) => {
-      const r = el.getBoundingClientRect();
-      el.style.setProperty('--gx', (e.clientX - r.left) + 'px');
-      el.style.setProperty('--gy', (e.clientY - r.top) + 'px');
-    }));
-  }
+  document.querySelectorAll('pre[data-copy]').forEach((pre) => {
+    pre.style.cursor = 'copy'; pre.title = 'Click to copy';
+    pre.addEventListener('click', () => navigator.clipboard?.writeText(pre.textContent.trim()).then(() => { pre.title = 'Copied'; }).catch(() => {}));
+  });
 
-  // Live readings, counted from the units' wallet contracts.
-  const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  // Readings, the floor and the belt, all counted from the agents' wallet contracts.
+  const belt = $('#belt');
+  const fillBelt = (inks) => { if (!belt) return; const one = inks.length ? inks : ['', '', '', '']; const row = []; while (row.length < 80) row.push(...one); belt.replaceChildren(...[...row, ...row].map((c) => el('i', { className: c }))); };
+  fillBelt([]);
   fetch('/api/agents').then((r) => (r.ok ? r.json() : null)).then((d) => {
     if (!d) return;
+    const set = (id, v) => { const n = document.getElementById(id); if (n) n.textContent = v; };
     set('r-agents', d.totals.agents.toLocaleString('en-US'));
     set('r-runs', d.totals.runs.toLocaleString('en-US'));
-    set('r-income', '$' + (Number(d.totals.income) / 1e6).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+    set('r-income', usd(d.totals.income));
+    set('r-profit', usd(d.totals.profit));
+    const agents = [...d.agents].sort((a, b) => Number(b.stats?.profit || 0) - Number(a.stats?.profit || 0));
+    const top = Math.max(1, ...agents.map((a) => Number(a.stats?.profit || 0)));
+    fillBelt(agents.map((a) => { const h = Number(a.stats?.profit || 0) / top; return h > 0.75 ? 'w' : h > 0.35 ? 'o' : h > 0 ? 'm' : ''; }));
+    const rows = $('#f-rows');
+    if (rows) {
+      rows.replaceChildren(...(agents.length ? agents.slice(0, 5).map((a) => el('a', { className: 'row2', href: '/a/' + a.id },
+        el('span', {}, el('b', { textContent: a.name }), el('small', { textContent: usd(a.price) + ' a call · ' + (a.runs || 0) + (a.runs === 1 ? ' run' : ' runs') })),
+        el('span', { className: 'num hide', textContent: usd(a.stats?.income) }),
+        el('span', { className: 'num', textContent: usd(a.stats?.profit) }),
+        el('span', { className: 'go', textContent: 'HIRE →' }))) : [el('div', { className: 'row2' }, el('span', { className: 'lbl', textContent: 'No agents yet' }))]));
+      set('f-at', agents.length + (agents.length === 1 ? ' agent' : ' agents') + ' · live');
+    }
   }).catch(() => {});
 
-  document.querySelectorAll('form.join').forEach((form) => {
-    const input = form.querySelector('input');
-    const button = form.querySelector('button');
-    const note = form.parentElement.querySelector('.note');
-    const first = note ? note.textContent : '';
-    form.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const email = input.value.trim();
-      if (!email) return;
-      button.disabled = true;
-      try {
-        const res = await fetch('/api/waitlist', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email }) });
-        if (res.ok) {
-          form.classList.add('done');
-          input.value = ''; input.placeholder = 'You are on the list';
-          if (note) note.textContent = 'Logged. An email only when something ships.';
-        } else {
-          if (note) note.textContent = res.status === 400 ? 'That address does not look right.' : 'That did not go through. Try again.';
-          button.disabled = false;
-        }
-      } catch {
-        if (note) note.textContent = 'That did not go through. Try again.';
-        button.disabled = false;
-      }
-    });
-    input.addEventListener('input', () => { if (note && !form.classList.contains('done')) note.textContent = first; });
+  const form = $('form.join'), note = $('#join-note');
+  if (form) form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const input = form.querySelector('input'), button = form.querySelector('button'), email = input.value.trim();
+    if (!email) return;
+    button.disabled = true;
+    try {
+      const res = await fetch('/api/waitlist', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email }) });
+      if (res.ok) { input.value = ''; note.textContent = 'Logged. An email only when something ships.'; }
+      else { note.textContent = res.status === 400 ? 'That address does not look right.' : 'That did not go through. Try again.'; button.disabled = false; }
+    } catch { note.textContent = 'That did not go through. Try again.'; button.disabled = false; }
   });
 })();

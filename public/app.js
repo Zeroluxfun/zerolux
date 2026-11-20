@@ -59,6 +59,9 @@ async function pageCreate() {
     timer = setInterval(() => { if (i < stations.length - 1) { stations[i].className = 'station done'; stations[++i].classList.add('on'); } }, 850);
   };
   document.querySelectorAll('[data-job]').forEach((b) => b.addEventListener('click', () => { job.value = b.dataset.job; job.focus(); }));
+  // A job typed on the home page arrives in the address; put it on the line straight away.
+  const sent = new URLSearchParams(location.search).get('job');
+  if (sent && sent.trim()) { job.value = sent.trim().slice(0, 1200); history.replaceState(null, '', '/create'); setTimeout(() => $('#line').requestSubmit(), 0); }
   $('#line').addEventListener('submit', async (e) => {
     e.preventDefault(); err.textContent = ''; go.disabled = true; $('#result').hidden = true; run(true);
     const r = await api('/api/line', { job: job.value });
