@@ -3,6 +3,7 @@ import { line, createAgent, json, allow, clientKey } from './line.js';
 import { hire, sweep } from './run.js';
 import { listAgents, findAgent, getAgent, getRun, card, config } from './api.js';
 import { mcp } from './mcp.js';
+import { feature } from './feature.js';
 export { Signer } from './chain.js';
 
 const HOST = 'zerolux.fun';
@@ -83,6 +84,12 @@ async function routeProduct(request, env, ctx, url) {
     if (p.startsWith('/api/runs/')) { const r = await getRun(env, p.slice(10)); return r ? open(json(r, 200, { 'cache-control': 'public, max-age=30' })) : json({ error: 'No paid run with that id.' }, 404); }
     if (p === '/api/line') return request.method === 'POST' ? line(request, env) : new Response(null, { status: 405 });
     if (p === '/api/agents') return request.method === 'POST' ? createAgent(request, env) : open(await listAgents(env));
+    const feat = p.match(/^\/api\/agents\/(\d{1,9})\/feature$/);
+    if (feat) {
+      if (request.method !== 'POST') return json({ error: 'POST {"tx": "0x..."} with the hash of a $LUX burn to feature this agent.' }, 405, { allow: 'POST' });
+      const a = await findAgent(env, feat[1]);
+      return a ? await feature(request, env, a) : json({ error: 'No agent with that number.' }, 404);
+    }
     if (p.startsWith('/api/agents/')) { const a = await findAgent(env, p.slice(12)); return a ? open(await getAgent(env, a)) : json({ error: 'not found' }, 404); }
     if (p.startsWith('/card/')) return card(env, p.slice(6).replace(/\.json$/, ''));
     if (p === '/mcp') return open(await mcp(request, env, ctx));

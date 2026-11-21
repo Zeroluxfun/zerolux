@@ -7,10 +7,14 @@
   "durable_objects": { "bindings": [{ "name": "SIGNER", "class_name": "Signer" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Signer"] }],
   "triggers": { "crons": ["*/5 * * * *"] },
-  // FACTORY (version 1) and FACTORY2 (version 2, where new agents are made) and TREASURY are the contracts on Robinhood Chain (4663). PRODUCT "on" means the factory is open to everyone;
-  // set it to "off" to put the factory routes back behind the build key.
+  // FACTORY (version 1), FACTORY2 (version 2), FACTORY3 (version 3) and TREASURY are the contracts on Robinhood Chain (4663). NEW_AGENT_VERSION is the
+  // wallet version a new agent gets ("2" until version 3 is opened to everyone; a caller with the build key can ask for another with "version").
+  // PRODUCT "on" means the factory is open to everyone; set it to "off" to put the factory routes back behind the build key.
+  // LUX is the $LUX token. Burning FEATURE_LUX whole tokens (a transfer to 0x…dEaD carrying the agent's number) features an agent on the market for FEATURE_DAYS days.
+  // FEATURE_FROM_BLOCK is the first block a burn may come from, so burns made before featuring opened cannot be used. It is left unset here on purpose:
+  // until it is added to "vars" (a block number, as text) the feature endpoint answers 503 and the page does not offer the burn. Set it at deploy time.
   // Secrets: OPERATOR_KEY, RPC_URL, OPENROUTER_KEY, BUILD_KEY.
-  "vars": { "HOUSE_PAYERS": "0xf07E0d9409A8610ef5E2C44BC03A65D6D27547DF", "FACTORY": "0xc9C8b726e73c78eb688e19f0b686CbBDE9F0985B", "FACTORY2": "0xd2c83835f26Da34059e2156FD725F436444D224A", "TREASURY": "0xd6c53788C600fB99051417ab72E07E42eE5112C7", "MARKUP_BPS": "2000", "PRODUCT": "on" },
+  "vars": { "LUX": "0x1640D5b6CfBDDABBDE8ae2401F7D4ec5A2026951", "FEATURE_LUX": "100000", "FEATURE_DAYS": "7", "FEATURE_FROM_BLOCK": "120183600", "HOUSE_PAYERS": "0xf07E0d9409A8610ef5E2C44BC03A65D6D27547DF", "FACTORY": "0xc9C8b726e73c78eb688e19f0b686CbBDE9F0985B", "FACTORY2": "0xd2c83835f26Da34059e2156FD725F436444D224A", "FACTORY3": "0x27618170A976cBa7972807C1DC4aF55cea2eDf3c", "NEW_AGENT_VERSION": "2", "TREASURY": "0xd6c53788C600fB99051417ab72E07E42eE5112C7", "MARKUP_BPS": "2000", "PRODUCT": "on" },
   "routes": [
     { "pattern": "zerolux.fun", "custom_domain": true },
     { "pattern": "www.zerolux.fun", "custom_domain": true }

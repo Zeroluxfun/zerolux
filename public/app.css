@@ -19,8 +19,8 @@ button,input,textarea{font:inherit;color:inherit}
 @media (prefers-reduced-transparency:reduce){.glass{-webkit-backdrop-filter:none;backdrop-filter:none;background:rgba(8,4,30,.94)}}
 
 .nav{position:sticky;top:0;z-index:20;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px var(--edge);border-radius:0;border-width:0 0 1px;--tint:.6}
-.brand{display:flex;align-items:center;gap:10px;font-weight:800;font-stretch:112%;letter-spacing:.02em;text-transform:uppercase}
-.brand img{width:auto;height:36px;border-radius:0}
+.brand{display:flex;align-items:center;gap:12px;font-family:"Archivo",system-ui,sans-serif;font-size:15px;font-weight:500;font-stretch:112%;letter-spacing:.3em;text-transform:uppercase;white-space:nowrap}
+.brand img{width:30px;height:30px;border-radius:0}
 .links{display:flex;gap:clamp(12px,2vw,26px);font-size:15px;color:var(--dim)}
 .links a:hover,.links a[aria-current]{color:var(--paper)}
 .pill{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:0;border-radius:999px;padding:12px 20px;font-weight:700;cursor:pointer;background:linear-gradient(100deg,var(--amber),var(--hot) 55%,var(--magenta));color:#170403;box-shadow:0 8px 30px -8px rgba(255,75,31,.7),inset 0 1px 0 rgba(255,255,255,.5);transition:transform .15s,filter .15s}

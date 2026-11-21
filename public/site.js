@@ -25,6 +25,7 @@
     const fit = () => { job.style.height = '52px'; job.style.height = Math.min(160, job.scrollHeight) + 'px'; };
     job.addEventListener('input', fit);
     job.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (job.value.trim()) job.form.requestSubmit(); } });
+    document.querySelectorAll('[data-copy]').forEach((b) => b.addEventListener('click', () => navigator.clipboard?.writeText(b.dataset.copy).then(() => { const was = b.textContent; b.textContent = 'Copied'; setTimeout(() => { b.textContent = was; }, 1400); }).catch(() => {})));
     document.querySelectorAll('[data-job]').forEach((b) => b.addEventListener('click', () => { job.value = b.dataset.job; fit(); job.focus(); }));
   }
 

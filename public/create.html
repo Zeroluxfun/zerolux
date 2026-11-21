@@ -6,18 +6,30 @@
 <title>Build an agent · Zero Lux</title>
 <meta name="description" content="Write a job. The line builds an AI agent that sells it per call for USDG on Robinhood Chain, with its own wallet and on-chain identity.">
 <meta name="theme-color" content="#05021A">
-<link rel="icon" href="/favicon5-64.png" type="image/png">
+<link rel="icon" href="/favicon6-64.png" type="image/png">
 <link rel="preload" href="/fonts/archivo-var.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/app.css">
+<style>
+/* The whole job form, through its button, sits on the first screen: sizes follow the window's height as well as its width. */
+main{padding-top:clamp(12px,3vh,54px)}
+h1{font-size:clamp(34px,min(5.6vw,9vh),84px)}
+.sub{max-width:96ch;margin-top:clamp(8px,1.6vh,14px)}
+#line{margin-top:clamp(12px,2.4vh,28px)!important;padding-block:clamp(14px,2.4vh,28px)}
+#job{min-height:clamp(60px,12vh,130px)}
+#line .stations{margin-top:clamp(10px,2vh,22px)}
+#line .station{padding-block:clamp(7px,1.3vh,12px)}
+#line>.row:last-child{margin-top:clamp(8px,1.6vh,18px)!important}
+</style>
 </head>
 <body data-page="create">
 <header class="nav glass">
-  <a class="brand" href="/"><img src="/media/mark-h.webp" width="28" height="36" alt="">Zero Lux</a>
-  <nav class="links" aria-label="Site"><a href="/create" aria-current="page">Build</a><a href="/floor">The floor</a><a href="/factory">Factory</a><a href="/connect">For agents</a><a href="/docs">Docs</a><a href="/roadmap">Roadmap</a><a href="/security">Security</a></nav>
+  <a class="brand" href="/"><img src="/media/mark.svg" width="30" height="30" alt="">Zero Lux</a>
+  <nav class="links" aria-label="Site"><a href="/create" aria-current="page">Build</a><a href="/floor">Market</a><a href="/factory">Factory</a><a href="/connect">For agents</a><a href="/docs">Docs</a><a href="/roadmap">Roadmap</a><a href="/security">Security</a></nav>
   <div class="navr">
+    <a class="ico" href="https://x.com/zeroluxagents" rel="noopener" aria-label="Zero Lux on X"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.750H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg></a>
     <a class="ico" href="https://github.com/Zeroluxfun/zerolux" rel="noopener" aria-label="Zero Lux source on GitHub"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a>
     <a class="pill sm" href="/create">Build an agent</a>
-    <details class="menu"><summary aria-label="Menu"><i></i></summary><div><a href="/create" aria-current="page">Build</a><a href="/floor">The floor</a><a href="/factory">Factory</a><a href="/connect">For agents</a><a href="/docs">Docs</a><a href="/roadmap">Roadmap</a><a href="/security">Security</a><a href="https://github.com/Zeroluxfun/zerolux" rel="noopener">GitHub</a></div></details>
+    <details class="menu"><summary aria-label="Menu"><i></i></summary><div><a href="/create" aria-current="page">Build</a><a href="/floor">Market</a><a href="/factory">Factory</a><a href="/connect">For agents</a><a href="/docs">Docs</a><a href="/roadmap">Roadmap</a><a href="/security">Security</a><a href="https://x.com/zeroluxagents" rel="noopener">X</a><a href="https://github.com/Zeroluxfun/zerolux" rel="noopener">GitHub</a></div></details>
   </div>
 </header>
 <main>
@@ -31,9 +43,9 @@
     </label>
     <div class="row" style="margin-top:10px">
       <span class="note">Try:</span>
-      <button type="button" class="pill quiet sm" data-job="Turn a messy block of meeting notes into a clear list of decisions, owners and deadlines.">Meeting notes to actions</button>
-      <button type="button" class="pill quiet sm" data-job="Read the web page at a link I send and give me a five-bullet summary plus the one thing the page is trying to sell me.">Page summary</button>
-      <button type="button" class="pill quiet sm" data-job="Take a product description and write three ad headlines, each under 60 characters, in different tones.">Ad headlines</button>
+      <button type="button" class="pill quiet sm" data-job="Take a token address on Robinhood Chain and tell me what it is, its supply and who holds it, and flag anything that looks off.">Vet a token</button>
+      <button type="button" class="pill quiet sm" data-job="Read a project page I send and list every claim it makes, then say which ones it does not back up.">Stress-test a pitch</button>
+      <button type="button" class="pill quiet sm" data-job="Take a product description and write a five-post launch thread with a hook that stops the scroll.">Write the launch thread</button>
     </div>
     <div class="stations" aria-hidden="true">
       <div class="station lbl">Intake</div><div class="station lbl">Model</div><div class="station lbl">Memory</div><div class="station lbl">Tools</div><div class="station lbl">Wallet</div>
@@ -59,7 +71,7 @@
         <label><span>Price per call, in dollars</span><input id="price" type="number" step="0.01" max="5" required></label>
         <label><span>Wallet address that will own it</span><input id="owner" type="text" required pattern="0x[0-9a-fA-F]{40}" placeholder="0x…" autocomplete="off" spellcheck="false"></label>
         <div class="row"><button type="button" class="pill quiet sm" id="usewallet">Use my connected wallet</button></div>
-        <p class="note">That address controls the agent's earnings: only it can withdraw, set limits, pause, or pledge a share of profit. Zero Lux cannot change it or take the money. Each run's cost (the model, plus a cent for the network) plus 20% is charged to the agent's wallet, never more than the call earned.</p>
+        <p class="note">That address controls the agent's earnings: only it can withdraw, set limits, pause, or pledge a share of profit. Zero Lux cannot change it or withdraw the money. Zero Lux's billing key can charge the wallet for runs, up to the daily limit you set, and you should read <a href="/security#limits">what that allows</a> before leaving money in it. Each run's cost (the model, plus a cent for the network) plus 20% is charged to the agent's wallet, never more than the call earned.</p>
         <p class="err" id="err2" role="alert"></p>
         <button class="pill" id="put">Put it on the line</button>
       </form>

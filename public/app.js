@@ -117,6 +117,26 @@ async function pageAgent() {
   const tx = (h) => el('a', { href: cfg.explorer + '/tx/' + h, target: '_blank', rel: 'noopener', text: short(h) });
   const addr = (a) => el('a', { href: cfg.explorer + '/address/' + a, target: '_blank', rel: 'noopener', text: a });
   let A;
+  // Featuring: anyone may burn $LUX to put this agent at the top of the market. What it costs comes from /api/config.
+  const L = cfg.lux, fbox = $('#feature');
+  const lux = (n) => Number(n).toLocaleString('en-US', { maximumFractionDigits: 2 });
+  const BURN = 'zl-burn-' + id; // a burn that was sent and not yet recorded is kept in this browser, so it is never lost or sent twice
+  const pending = () => { try { return JSON.parse(localStorage.getItem(BURN) || 'null'); } catch { return null; } };
+  const setPending = (v) => { try { v ? localStorage.setItem(BURN, JSON.stringify(v)) : localStorage.removeItem(BURN); } catch {} };
+  let armed = 0, burning = false;
+  const drawFeature = () => {
+    if (!fbox) return;
+    fbox.hidden = !L; if (!L) return;
+    const on = !!A.featured_until && Date.parse(A.featured_until) > Date.now();
+    $('#f-what').textContent = `Burn ${lux(L.featureAmount)} $LUX to put this agent at the top of the market for ${L.featureDays} ${L.featureDays === 1 ? 'day' : 'days'}.`;
+    $('#f-status').textContent = on ? 'Featured until ' + new Date(A.featured_until).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC' }) + ' UTC' : 'Not featured';
+    $('#f-burned').textContent = lux(A.lux_burned || 0) + ' $LUX';
+    if (burning) return;
+    const b = $('#f-go'), held = pending();
+    b.textContent = held ? 'Finish featuring' : armed ? `Confirm: burn ${lux(L.featureAmount)} $LUX` : `Burn ${lux(L.featureAmount)} $LUX`;
+    b.disabled = !held && (A.status !== 'live' || !L.open); $('#f-no').hidden = !armed || !!held;
+    $('#f-closed').hidden = !!L.open; $('#f-paste').hidden = !L.open;
+  };
   const load = async () => {
     const r = await api('/api/agents/' + id);
     if (!r.ok) { $('main').replaceChildren(el('div', { class: 'empty glass', text: 'No unit with that number.' })); return false; }
@@ -126,6 +146,8 @@ async function pageAgent() {
     $('#chips').replaceChildren(el('span', { class: 'chip hot', text: usd(A.price) + ' a call in USDG' }), el('span', { class: 'chip', text: A.model + ' model' }), ...A.tools.map((t) => el('span', { class: 'chip', text: cfg.tools[t] })), ...(A.identity ? [el('span', { class: 'chip', text: 'ERC-8004 #' + A.identity })] : []), ...(A.status !== 'live' ? [el('span', { class: 'chip', text: 'Off the line' })] : []));
     $('#l-income').textContent = usd(s.income); $('#l-cost').textContent = usd(s.charged); $('#l-profit').textContent = usd(s.profit); $('#l-runs').textContent = A.runs;
     const who = A.customers; if (who) $('#l-who').textContent = who.payers ? `${who.outside_payers} outside ${who.outside_payers === 1 ? 'customer has' : 'customers have'} paid ${usd(who.from_outside)}${who.top_outside_share != null ? `, the largest of them ${who.top_outside_share}% of that` : ''}. ${usd(who.from_insiders)} came from the owner, a pledge holder or Zero Lux's own test wallet.` : 'No one has paid this agent yet.';
+    // A version 3 wallet counts outside income itself, on chain, net of refunds: show the contract's own figures.
+    if (A.version === 3 && s.externalIncome != null) $('#l-who').textContent = BigInt(s.externalIncome) + BigInt(s.insiderIncome) > 0n ? `On chain, this wallet counts ${usd(s.externalIncome)} from ${s.payerCount} outside ${s.payerCount === 1 ? 'customer' : 'customers'}${BigInt(s.externalIncome) > 0n ? `, the largest of them ${Math.round((Number(s.topPayerPaid) / Number(s.externalIncome)) * 100)}% of that` : ''}, and ${usd(s.insiderIncome)} from its owner, a pledge holder or their other wallets. ${usd(s.totalRefunded)} has been refunded to customers.` : `No one has paid this agent yet.${BigInt(s.totalRefunded || 0) > 0n ? ` ${usd(s.totalRefunded)} has been refunded to customers.` : ''}`;
     $('#wallet').replaceChildren(addr(A.wallet)); $('#owner').replaceChildren(addr(A.owner));
     $('#input').placeholder = A.input_hint || 'What should it work on?'; $('#pay').textContent = 'Pay ' + usd(A.price) + ' and run'; $('#pay').disabled = A.status !== 'live';
     $('#instr').textContent = A.instructions;
@@ -139,11 +161,49 @@ async function pageAgent() {
     $('#o-avail').textContent = usd(s.withdrawable); $('#o-held').textContent = lien ? usd(BigInt(s.balance || 0) - BigInt(s.withdrawable || 0)) : usd(0);
     $('#pause').textContent = s.paused ? 'Resume runs' : 'Pause runs'; $('#pause').dataset.next = s.paused ? '0' : '1';
     $('#lienform').hidden = !!lien; $('#endlien').hidden = !lien;
-    // Version 2 wallets can be named in the identity registry as the wallet this agent is paid at.
-    const nm = $('#nameit'); if (nm) { nm.hidden = !(A.version === 2 && A.identity && !s.named); $('#named').hidden = !s.named; }
+    // Version 2 and 3 wallets can be named in the identity registry as the wallet this agent is paid at.
+    const nm = $('#nameit'); if (nm) { nm.hidden = !(A.version >= 2 && A.identity && !s.named); $('#named').hidden = !s.named; }
+    drawHire(); drawFeature();
     return true;
   };
+  // Version 3: which other units this one may hire during a run. The list lives on the wallet contract and only its owner can change it.
+  const listed = () => A.can_hire_agents || [];
+  const drawHire = () => {
+    // What a customer should know before paying: this unit may pay other units out of the job. Names are set as text, never as markup.
+    let t = $('#hire-terms'); if (!t && $('#hire')) { t = el('p', { class: 'note', id: 'hire-terms' }); $('#hire').append(t); }
+    if (t) { t.hidden = !listed().length; t.textContent = listed().length ? 'During a run this unit may pay up to half of the job\'s budget to ' + listed().map((x) => `unit ${x.agent_id} "${x.name}"`).join(', ') + '. Money paid to a hired unit that delivered is not refunded, even if the job itself fails.' : ''; }
+    const l = $('#ch-list'); if (!l) return;
+    l.replaceChildren(...(listed().length ? listed().map((x) => el('span', { style: 'display:block', text: `Unit ${x.agent_id} "${x.name}" · ${usd(x.price)} a call · wallet ${x.wallet}` })) : ['This unit cannot hire any other unit yet.']));
+  };
   if (!(await load())) return;
+  if (A.version === 3 && $('#oerr')) {
+    $('#oerr').before(el('form', { class: 'stack', id: 'canhire' },
+      el('p', { class: 'lbl', text: 'Units this one can hire during a run' }), el('p', { class: 'note', id: 'ch-list' }),
+      el('label', {}, el('span', { text: 'Unit number' }), el('input', { id: 'ch-id', type: 'number', min: '0', step: '1', autocomplete: 'off' })),
+      el('p', { class: 'note', id: 'ch-check' }),
+      el('button', { class: 'pill quiet sm', id: 'ch-add', text: 'Allow it to hire this unit' }), el('button', { class: 'pill quiet sm', id: 'ch-del', type: 'button', text: 'Stop it hiring this unit' })));
+    drawHire();
+    // Two presses: the first shows exactly which unit this is and what allowing it means, the second sends it from the owner's wallet.
+    let ready = null;
+    const reset = () => { ready = null; $('#ch-check').textContent = ''; $('#ch-add').textContent = 'Allow it to hire this unit'; $('#ch-del').textContent = 'Stop it hiring this unit'; };
+    $('#ch-id').addEventListener('input', reset);
+    const setHire = async (allowed) => {
+      try {
+        const n = $('#ch-id').value.trim(); if (!/^\d{1,9}$/.test(n)) throw new Error('Enter a unit number.');
+        if (Number(n) === A.id) throw new Error('A unit cannot hire itself.');
+        if (ready && ready.n === n && ready.allowed === allowed) { const w = ready.wallet; reset(); return act('setPayable', word(w) + uintWord(allowed ? 1 : 0)); }
+        const r = await api('/api/agents/' + n); if (!r.ok) throw new Error('No unit with that number.');
+        const T = r.data.agent;
+        if (allowed && T.version !== 3) throw new Error('Only units on wallet version 3 can be hired by another unit.');
+        reset(); ready = { n, allowed, wallet: T.wallet };
+        $('#ch-check').textContent = `Unit ${T.id} "${T.name}" · ${usd(T.price)} a call · wallet ${T.wallet}. ` + (allowed ? 'If you allow this, your unit will be able to pay that unit out of customers\' jobs, up to half of a job\'s budget, and that money is not refunded to the customer when that unit delivers. Press again to confirm.' : 'Your unit will no longer be able to pay that unit. Press again to confirm.');
+        $(allowed ? '#ch-add' : '#ch-del').textContent = 'Confirm';
+        oerr('');
+      } catch (x) { oerr(explain(x)); }
+    };
+    $('#canhire').addEventListener('submit', (e) => { e.preventDefault(); setHire(true); });
+    $('#ch-del').addEventListener('click', () => setHire(false));
+  }
   if (new URLSearchParams(location.search).has('new')) $('#fresh').hidden = false;
 
   // hire it
@@ -159,7 +219,8 @@ async function pageAgent() {
       if (r.ok || !r.data.again) break;
       await new Promise((s) => setTimeout(s, 5000));
     }
-    if (r.data.again) throw new Error('This is taking longer than it should. Your payment is safe: press the button again to pick the run up, within 15 minutes.');
+    // What happens to a payment nobody collects depends on the wallet version: a version 3 wallet sends it back, older ones keep it.
+    if (r.data.again) throw new Error('This is taking longer than it should. Your payment is safe: press the button again to pick the run up, within 15 minutes.' + (A.version === 3 ? ' After that it is returned to your wallet, less what the attempts cost and the network charge' + (A.can_hire_agents?.length ? ', and less anything it paid a unit it hired.' : '.') : ''));
     // The ticket is only let go on a result or an answer that says this payment is finished.
     if (!r.ok && !r.data.final) throw new Error((r.data.error || 'Something went wrong.') + ' Your payment is kept: press the button again to pick the run up.');
     keep(null);
@@ -191,6 +252,89 @@ async function pageAgent() {
     } catch (e2) { say(explain(e2)); }
     b.disabled = false; b.textContent = 'Pay ' + usd(A.price) + ' and run';
   });
+
+  // feature it: one transfer of $LUX to the burn address from the visitor's own wallet (any wallet, not only the owner's),
+  // then the transaction hash goes to the server, which checks the burn on chain and records it once.
+  // The calldata carries one extra word after the transfer: this agent's number. The token ignores it; the server
+  // reads it, so the burn can only ever be used for this agent.
+  if (fbox && L) {
+    const fsay = (t, cls = 'err') => { const e = $('#ferr'); e.className = cls; e.textContent = t; };
+    const pause = (ms) => new Promise((s) => setTimeout(s, ms));
+    const saved = ' Your burn is saved in this browser: press the button again to finish.';
+    const mined = async (hash) => {
+      for (let i = 0; i < 90; i++) { // about three minutes
+        const r = await eth().request({ method: 'eth_getTransactionReceipt', params: [hash] }).catch(() => null);
+        if (r) return r;
+        await pause(2000);
+      }
+      return null;
+    };
+    const record = async (hash, since) => {
+      // `kept` is true for the burn this browser is holding; a pasted hash never touches that one.
+      const kept = () => pending()?.tx === hash, drop = () => { if (kept()) setPending(null); };
+      const later = () => (kept() ? saved : ' Nothing was recorded: try again in a minute.');
+      for (let tries = 0; tries < 10; tries++) {
+        const r = await api('/api/agents/' + id + '/feature', { tx: hash });
+        if (r.ok) {
+          drop();
+          A.featured_until = r.data.featured_until; A.lux_burned = String(Number(A.lux_burned || 0) + Number(r.data.burned));
+          fsay(`Done. ${lux(r.data.burned)} $LUX burned. This agent is featured on the market until the time shown above.`, 'ok');
+          setTimeout(load, 16_000); return;
+        }
+        if (r.data.again) { fsay('Waiting for the chain to confirm the burn…', 'note'); await pause(3000); continue; }
+        // A final answer about this transaction lets it go; anything else (a busy server, a daily limit) keeps it for another try.
+        const final = [400, 404, 409, 422].includes(r.status);
+        if (final) { drop(); setTimeout(load, 16_000); }
+        throw new Error((r.data.error || 'The burn could not be recorded.') + (final ? '' : later()));
+      }
+      if (kept() && Date.now() - since > 3_600_000) { drop(); throw new Error('That transaction did not confirm within an hour, so it was most likely dropped or replaced. Check your wallet: if the burn went through under another hash, paste that hash below.'); }
+      throw new Error('The chain has not confirmed the burn yet.' + later());
+    };
+    const disarm = () => { armed = 0; if (!burning) { fsay(''); drawFeature(); } };
+    $('#f-no').addEventListener('click', disarm);
+    $('#f-go').addEventListener('click', async () => {
+      if (burning) return;
+      const b = $('#f-go'), held = pending();
+      // Two presses: the first says exactly what will happen, the second sends it.
+      if (!held && !armed) {
+        const at = (armed = Date.now()); drawFeature();
+        fsay(`This sends ${lux(L.featureAmount)} $LUX from your wallet to the burn address ${L.burnAddress}. A burn cannot be undone: nobody, Zero Lux included, can return the tokens. Press again to confirm.`, 'note');
+        setTimeout(() => { if (armed === at) disarm(); }, 45_000);
+        return;
+      }
+      armed = 0; burning = true; b.disabled = true; $('#f-no').hidden = true;
+      try {
+        let hash = held?.tx, since = held?.at || Date.now();
+        if (!hash) {
+          b.textContent = 'Connecting your wallet…'; fsay('');
+          const from = await connect(), units = BigInt(L.featureAmount) * 10n ** 18n;
+          const bal = await eth().request({ method: 'eth_call', params: [{ to: L.address, data: '0x70a08231' + word(from) }, 'latest'] }).catch(() => null);
+          if (/^0x[0-9a-f]+$/i.test(bal || '') && BigInt(bal) < units) throw new Error(`This wallet holds ${lux(BigInt(bal) / 10n ** 18n)} $LUX. Featuring takes ${lux(L.featureAmount)}.`);
+          b.textContent = 'Confirm in your wallet…';
+          hash = await sendTx(from, L.address, '0xa9059cbb' + word(L.burnAddress) + uintWord(units) + uintWord(A.id)); // transfer(burn address, amount), then this agent's number
+          if (!/^0x[0-9a-f]{64}$/i.test(hash || '')) throw new Error('Your wallet did not give back a transaction hash, so the burn could not be followed. Find the transaction in your wallet and paste its hash below.');
+          setPending({ tx: hash, at: since });
+          b.replaceChildren(el('span', { class: 'spin' }), ' Burning…'); fsay('Sent. Waiting for the chain to confirm the burn. Transaction ' + short(hash), 'note');
+          const rc = await mined(hash);
+          if (rc && rc.status !== '0x1') { setPending(null); throw new Error('The burn failed on chain, so no $LUX was burned. You can try again.'); }
+        }
+        b.replaceChildren(el('span', { class: 'spin' }), ' Recording…');
+        await record(hash, since);
+      } catch (e) { fsay(explain(e)); }
+      burning = false; drawFeature();
+    });
+    // For a wallet that replaced the transaction (a speed-up) or never showed its hash: paste the hash of a burn made from this page.
+    $('#f-paste').addEventListener('submit', async (e) => {
+      e.preventDefault(); if (burning) return;
+      const hash = $('#f-hash').value.trim();
+      if (!/^0x[0-9a-fA-F]{64}$/.test(hash)) { fsay('That is not a transaction hash. It is 0x followed by 64 characters.'); return; }
+      const b = $('#f-go'); armed = 0; burning = true; b.disabled = true; $('#f-no').hidden = true; $('#f-send').disabled = true;
+      b.replaceChildren(el('span', { class: 'spin' }), ' Recording…'); fsay('');
+      try { await record(hash.toLowerCase(), Date.now()); $('#f-hash').value = ''; } catch (x) { fsay(explain(x)); }
+      burning = false; $('#f-send').disabled = false; drawFeature();
+    });
+    if (pending()) fsay('You sent a burn from this browser that has not been recorded yet. Press the button to finish. Nothing is sent from your wallet again.', 'note');
+  }
 
   // owner controls: each builds one call to the wallet contract, sent from the owner's wallet
   const oerr = (t, cls = 'err') => { const e = $('#oerr'); e.className = cls; e.textContent = t; };
