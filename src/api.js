@@ -8,6 +8,7 @@ import { storedHash } from './revise.js';
 import { publicConnections } from './connect.js';
 import { luxConfig, wholeTokens } from './burn.js';
 import { lockConfig } from './lock.js';
+import { cardConfig } from './credits.js';
 import { profiles, photoPath } from './profile-api.js';
 
 const address = (a) => String(a.wallet).toLowerCase();
@@ -280,6 +281,8 @@ export function config(env) {
     factories: [env.FACTORY, env.FACTORY2, env.FACTORY3, env.FACTORY4].filter(Boolean), factoryByVersion: { 1: env.FACTORY || null, 2: env.FACTORY2 || null, 3: env.FACTORY3 || null, 4: env.FACTORY4 || null }, treasury: env.TREASURY,
     // Locking $LUX for a lower fee: the lock contract, and how much locked (for at least `minDays` more days) gives which fee rate to agents that wallet builds.
     lock: lockConfig(env),
+    // Paying by card: whether it is on, and the amounts of credit sold (credit in USDG units, the charge in cents, fee included).
+    card: cardConfig(env),
     markupBps: Number(env.MARKUP_BPS), identity: IDENTITY, models: modelsFor(version), tools: TOOLS, tool_floor: TOOL_FLOOR,
     // What a run is charged: tokens in and out at these rates (USDG units, six decimals, per token), plus the network charge, plus the markup.
     // `networkCost` is the charge for the version new agents get; `networkCosts` lists it for every wallet version.

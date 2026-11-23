@@ -103,3 +103,12 @@ CREATE TABLE IF NOT EXISTS revisions (
 -- secret), found by the fingerprint the spec carries (`k:` and 16 hex characters of an HMAC). Rows are kept when a
 -- connection changes, so a run admitted under an older version can still finish. See src/connect.js.
 CREATE TABLE IF NOT EXISTS conn_keys (agent_id INTEGER NOT NULL, fp TEXT NOT NULL, enc TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (agent_id, fp));
+
+-- Card credit. An account is the SHA-256 of a secret kept in the buyer's browser. Its balance is the sum of its rows:
+-- 'topup' (a paid Stripe checkout, id top:<session>), 'spend' (a run, id run:<run id>, negative, open until the run closes),
+-- 'back' (credit returned for a run that did not deliver, id back:<run id>), 'freeze' (a disputed card payment, amount 0).
+CREATE TABLE IF NOT EXISTS credit_events (
+  id TEXT PRIMARY KEY, account TEXT NOT NULL, kind TEXT NOT NULL, amount INTEGER NOT NULL, ref TEXT, meta TEXT,
+  state TEXT NOT NULL DEFAULT 'closed', created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS credit_events_account ON credit_events (account);
+CREATE INDEX IF NOT EXISTS credit_events_open ON credit_events (state, kind);

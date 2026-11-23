@@ -1,11 +1,12 @@
 // Zero Lux Worker: the site, the line (job to agent), paid runs, the floor, MCP.
-import { line, createAgent, json, allow, clientKey } from './line.js';
+import { line, createAgent, json, allow, clientKey, hasBuildKey } from './line.js';
 import { hire, sweep } from './run.js';
 import { listAgents, findAgent, getAgent, getRun, card, config } from './api.js';
 import { mcp } from './mcp.js';
 import { feature } from './feature.js';
 import { getImage } from './tools.js';
 import { setProfile, getPhoto, dropProfile } from './profile-api.js';
+import { balance, checkout, confirm, webhook, afterCard, settleCard, cardStatus } from './credits.js';
 import { reviseAgent, revisions } from './revise.js';
 import { lockOf } from './lock.js';
 export { Signer } from './chain.js';
@@ -58,7 +59,7 @@ async function routeProduct(request, env, ctx, url) {
   let p; try { p = decodeURIComponent(url.pathname); } catch { return simple('Not found: Zero Lux', 'Nothing at this address.', 404); }
   p = p.replace(/\/{2,}/g, '/').replace(/(.)\/$/, '$1').toLowerCase();
   const m = p.match(/^\/a\/(\d{1,9})(\/run)?$/);
-  const isProduct = p === '/api/line' || p.startsWith('/api/agents') || p.startsWith('/api/runs/') || p === '/api/config' || p.startsWith('/api/lock/') || p.startsWith('/card/') || p === '/mcp' || p === '/skill.md' || p in PAGES || m || ['/create.html', '/floor.html', '/agent.html', '/connect.html', '/docs.html', '/roadmap.html', '/security.html', '/factory.html', '/lock.html', '/factory.js', '/vendor/three.module.min.js', '/agent', '/app.js', '/app.css'].includes(p);
+  const isProduct = p === '/api/line' || p.startsWith('/api/agents') || p.startsWith('/api/runs/') || p === '/api/config' || p.startsWith('/api/credits') || p === '/api/stripe/webhook' || p.startsWith('/api/lock/') || p.startsWith('/card/') || p === '/mcp' || p === '/skill.md' || p in PAGES || m || ['/create.html', '/floor.html', '/agent.html', '/connect.html', '/docs.html', '/roadmap.html', '/security.html', '/factory.html', '/lock.html', '/factory.js', '/vendor/three.module.min.js', '/agent', '/app.js', '/app.css'].includes(p);
   if (!isProduct) return null;
   // An agent's identity card is public from the moment its on-chain identity points at it.
   if (env.PRODUCT !== 'on' && !p.startsWith('/card/')) {
@@ -88,6 +89,13 @@ async function routeProduct(request, env, ctx, url) {
   if (!env.FACTORY || !env.OPERATOR_KEY || !env.RPC_URL) return json({ error: 'The factory is not switched on yet.' }, 503);
   try {
     if (p === '/api/config') return config(env);
+    // Paying by card: credit bought through Stripe's checkout, spent on runs.
+    if (p === '/api/credits/status') return (await hasBuildKey(request, env)) ? cardStatus(env) : json({ error: 'not found' }, 404);
+    if (p === '/api/credits') return request.method === 'GET' ? balance(request, env) : new Response(null, { status: 405, headers: { allow: 'GET' } });
+    if (p === '/api/credits/checkout' || p === '/api/credits/confirm' || p === '/api/stripe/webhook') {
+      if (request.method !== 'POST') return new Response(null, { status: 405, headers: { allow: 'POST' } });
+      return p.endsWith('checkout') ? checkout(request, env) : p.endsWith('confirm') ? confirm(request, env) : webhook(request, env);
+    }
     if (p.startsWith('/api/lock/')) return request.method === 'GET' ? open(await lockOf(request, env, p.slice(10))) : new Response(null, { status: 405, headers: { allow: 'GET' } });
     if (p.startsWith('/api/runs/')) { const r = await getRun(env, p.slice(10)); return r ? open(json(r, 200, { 'cache-control': 'public, max-age=30' })) : json({ error: 'No paid run with that id.' }, 404); }
     if (p === '/api/line') return request.method === 'POST' ? line(request, env) : new Response(null, { status: 405 });
@@ -123,7 +131,10 @@ async function routeProduct(request, env, ctx, url) {
     if (m && m[2]) {
       if (request.method !== 'POST' && request.method !== 'GET') return json({ error: 'POST {"input": "..."} to run this agent.' }, 405, { allow: 'GET, POST', 'access-control-allow-origin': '*' });
       const a = await findAgent(env, m[1]);
-      return a ? open(await hire(request, env, ctx, a)) : json({ error: 'not found' }, 404);
+      if (!a) return json({ error: 'not found' }, 404);
+      const ran = await hire(request, env, ctx, a);
+      if (request.headers.get('x-credits')) await afterCard(env, request);
+      return open(ran);
     }
   } catch (e) {
     console.error('product route failed', p, e?.name);
@@ -135,6 +146,7 @@ async function routeProduct(request, env, ctx, url) {
 export default {
   async scheduled(event, env, ctx) {
     if (env.FACTORY) ctx.waitUntil(sweep(env));
+    if (env.FACTORY) ctx.waitUntil(settleCard(env).catch(() => {}));
   },
 
   async fetch(request, env, ctx) {

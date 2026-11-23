@@ -355,6 +355,79 @@ async function pageAgent() {
     b.disabled = false; b.textContent = 'Pay ' + usd(A.price) + ' and run';
   });
 
+  // ---- pay by card: credit bought through Stripe's checkout and kept under a code this browser holds ----
+  if ($('#cardbox')) (async () => {
+    const cfg = await config(); if (!cfg.card?.on) return;
+    const LS = 'zl-credit', KEEPC = 'zl-cardrun-' + id, DRAFT = 'zl-carddraft-' + id;
+    const rnd = (n) => [...crypto.getRandomValues(new Uint8Array(n))].map((x) => x.toString(16).padStart(2, '0')).join('');
+    const code = () => { try { const v = localStorage.getItem(LS); return /^[0-9a-f]{64}$/.test(v || '') ? v : null; } catch { return null; } };
+    const setCode = (v) => { try { localStorage.setItem(LS, v); return true; } catch { return false; } };
+    const account = async (v) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(v)))].map((x) => x.toString(16).padStart(2, '0')).join('');
+    const ss = { get: (k) => { try { return JSON.parse(sessionStorage.getItem(k) || 'null'); } catch { return null; } }, set: (k, v) => { try { sessionStorage.setItem(k, JSON.stringify(v ?? null)); } catch {} } };
+    let bal = 0, hold = false;
+    const go = $('#card-go');
+    const draw = () => {
+      const enough = bal >= Number(A.price) && !hold, waiting = ss.get(KEEPC);
+      $('#card-note').textContent = hold ? 'Your credit is on hold: a card payment that funded it was disputed.' : bal > 0 ? `You have ${usd(String(bal), 2)} of credit.` : 'No wallet? Pay by card: buy credit once, spend it on any agent.';
+      go.textContent = waiting ? 'Pick up your paid run' : enough ? `Pay ${usd(A.price)} from credit` : bal > 0 ? 'Add more credit' : 'Pay by card';
+      go.disabled = A.status !== 'live' || hold;
+      $('#card-code').hidden = !code(); if (code()) $('#card-key').value = code();
+    };
+    const refresh = async () => { const c = code(); if (c) { const r = await api('/api/credits', null, { 'x-credits': c }); if (r.ok) { bal = Number(r.data.balance); hold = !!r.data.on_hold; } } draw(); };
+    $('#cardbox').hidden = false;
+    $('#card-list').replaceChildren(...cfg.card.packs.map((p) => el('button', { class: 'pill quiet sm', type: 'button', 'data-pack': p.id, text: `${usd(p.credit, 2)} of credit for $${(p.charge_cents / 100).toFixed(2)}` })));
+    // Back from Stripe: the checkout is confirmed with the server, which reads it from Stripe itself.
+    const q = new URLSearchParams(location.search), came = q.get('card');
+    if (came) {
+      q.delete('card'); history.replaceState(null, '', location.pathname + (q.size ? '?' + q : ''));
+      const d = ss.get(DRAFT); if (d && !$('#input').value) $('#input').value = d; ss.set(DRAFT, null);
+      if (came.startsWith('cs_')) {
+        say('Checking your card payment…', 'note');
+        let r; for (let i = 0; i < 6; i++) { r = await api('/api/credits/confirm', { session: came }); if (r.ok || !r.data.again) break; await new Promise((s) => setTimeout(s, 2500)); }
+        say(r.ok ? `Added ${usd(r.data.credit, 2)} of credit. Press the button to run this unit.` : (r.data.error || 'The card payment could not be confirmed.'), r.ok ? 'ok' : 'err');
+      }
+    }
+    await refresh();
+    async function runCard(ticket, input) {
+      let r;
+      for (let tries = 0; tries < 60; tries++) {
+        r = await api(`/a/${id}/run`, { input, ticket }, { 'x-credits': code() });
+        if (r.ok || !r.data.again) break;
+        await new Promise((s) => setTimeout(s, 5000));
+      }
+      if (r.data.again) throw new Error('This is taking longer than it should. Press the button again to pick the run up. If it never runs, the credit comes back.');
+      ss.set(KEEPC, null);
+      if (!r.ok) throw new Error(r.data.error || 'The run failed.');
+      $('#out').hidden = false; $('#out').replaceChildren(...answer(r.data.output));
+      $('#receipt').replaceChildren('Paid ' + usd(r.data.paid) + ' from credit · ', tx(r.data.tx)); say('');
+      setTimeout(load, 9000);
+    }
+    go.addEventListener('click', async () => {
+      const waiting = ss.get(KEEPC), input = $('#input').value.trim();
+      if (!waiting && !(bal >= Number(A.price))) { $('#card-packs').hidden = !$('#card-packs').hidden; return; }
+      if (!waiting && !input) { $('#input').focus(); say('Write what the unit should work on first.'); return; }
+      go.disabled = true; say(''); go.replaceChildren(el('span', { class: 'spin' }), ' Working…');
+      try { const w = waiting || { ticket: rnd(16), input }; ss.set(KEEPC, w); await runCard(w.ticket, w.input); } catch (x) { say(explain(x)); }
+      await refresh();
+    });
+    $('#card-list').addEventListener('click', async (e) => {
+      const b = e.target.closest('[data-pack]'); if (!b) return;
+      if (!code() && !setCode(rnd(32))) { say('This browser will not keep the credit code, so credit bought here would be lost. Turn off private browsing and try again.'); return; }
+      b.disabled = true; say('');
+      ss.set(DRAFT, $('#input').value || null);
+      const r = await api('/api/credits/checkout', { account: await account(code()), pack: b.dataset.pack, back: '/a/' + id });
+      if (r.ok && r.data.url) { location.href = r.data.url; return; }
+      b.disabled = false; say(r.data.error || 'The card checkout could not be opened.');
+    });
+    $('#card-copy').addEventListener('click', async () => { try { await navigator.clipboard.writeText(code()); $('#card-copy').textContent = 'Copied'; } catch { $('#card-key').select(); } });
+    $('#card-use').addEventListener('click', async () => {
+      const v = $('#card-other').value.trim().toLowerCase();
+      if (!/^[0-9a-f]{64}$/.test(v)) { say('That is not a credit code.'); return; }
+      if (bal > 0 && v !== code()) { say('This browser still holds credit under its own code. Copy that code somewhere safe before switching, then press again.'); bal = 0; return; }
+      setCode(v); $('#card-other').value = ''; say('Using that code.', 'ok'); await refresh();
+    });
+  })();
+
   // feature it: one transfer of $LUX to the burn address from the visitor's own wallet (any wallet, not only the owner's),
   // then the transaction hash goes to the server, which checks the burn on chain and records it once.
   // The calldata carries one extra word after the transfer: this agent's number. The token ignores it; the server

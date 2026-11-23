@@ -55,6 +55,7 @@
 import { keccak256, concat, getAddress, isAddress, isHex, verifyTypedData, parseSignature, decodeEventLog, parseAbiItem, stringToHex, encodeAbiParameters, toHex } from 'viem';
 import { reader, signer, walletAbi, wallet2Abi, wallet3Abi, factory3Abi, usdgAbi, factoryAbi, factoryOf, operatorAddress, USDG, USDG_DOMAIN, CHAIN_ID, IDENTITY } from './chain.js';
 import { MODELS, json, chat, allow, clientKey, today } from './line.js';
+import { cardPay } from './credits.js';
 import { MAX_CALLS, callTool, functionName, secretOf, session } from './connect.js';
 import { READ_CHAIN_DEF, readChain, MARKET_DEF, market, CALC_DEF, calculate, SEARCH_DEF, SEARCH_WORST, webSearch, IMAGE_DEF, IMAGE_WORST, IMAGE_KEEP_DAYS, makeImage, keepImage } from './tools.js';
 
@@ -346,7 +347,10 @@ export async function hire(request, env, ctx, agent) {
   // anything, so the hiring paths can be tested without depending on what a model decides to do.
   const opts = { local, failing: flag === '1' ? 'before' : flag === 'after' ? 'after' : null, failSub: flag === 'sub', crashSub: flag === 'crash', devHire: local ? (request.headers.get('x-dev-hire') || '').split(',').filter(Boolean).slice(0, 4).map(Number) : [] };
 
-  const pay = readPayment(request, body);
+  // Paid from card credit: Zero Lux's own wallet signs the payment, and from here on it is a payment like any other.
+  let pay;
+  if (request.headers.get('x-credits')) { const card = await cardPay(request, env, agent, body, input); if (card.reply) return card.reply; pay = card.pay; }
+  else pay = readPayment(request, body);
   // With no payment the answer is always the price, so a board or a client can read the terms before sending work.
   if (!pay && agent.status === 'live' && (await selfRun(env, agent))) return json({ error: SELF_RUN, status: 'self-run' }, 409);
   if (!pay) return agent.status === 'live' ? paymentRequired(env, agent, request.url) : json({ error: 'This agent is off the line.' }, 409);

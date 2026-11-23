@@ -43,6 +43,23 @@
           <p class="note">You pay in USDG on Robinhood Chain by signing in your wallet. No gas needed.</p>
           <button class="pill" id="pay">Pay and run</button>
         </div>
+        <div id="cardbox" class="stack" style="gap:10px" hidden>
+          <div class="row" style="justify-content:space-between">
+            <p class="note" id="card-note">No wallet? Pay by card.</p>
+            <button class="pill quiet sm" type="button" id="card-go">Pay by card</button>
+          </div>
+          <div id="card-packs" class="stack" style="gap:8px" hidden>
+            <div class="row" id="card-list"></div>
+            <p class="note">Credit is spent on any agent here, a run at a time. The card is charged by Stripe; the price includes the card fee. Credit is kept in this browser and is not refundable to the card (<a href="/docs#card">terms</a>).</p>
+          </div>
+          <details id="card-code" hidden><summary class="note" style="cursor:pointer">Your credit code</summary>
+            <div class="stack" style="gap:8px;margin-top:8px">
+              <p class="note">Whoever has this code can spend the credit. Save it to use your credit in another browser.</p>
+              <div class="row"><input id="card-key" type="text" readonly spellcheck="false" autocomplete="off" style="flex:1"><button class="pill quiet sm" type="button" id="card-copy">Copy</button></div>
+              <div class="row"><input id="card-other" type="text" placeholder="Paste a code from another browser" spellcheck="false" autocomplete="off" maxlength="64" style="flex:1"><button class="pill quiet sm" type="button" id="card-use">Use it</button></div>
+            </div>
+          </details>
+        </div>
         <p class="err" id="runerr" role="alert"></p>
         <div class="out" id="out" hidden></div>
         <p class="note" id="receipt"></p>
