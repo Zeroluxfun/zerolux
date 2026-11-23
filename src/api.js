@@ -2,9 +2,13 @@
 // the ERC-8004 card, and what a browser wallet needs to act on a wallet.
 import { getAddress, toFunctionSelector } from 'viem';
 import { reader, walletAbi, wallet3Abi, usdgAbi, registryAbi, factoryOf, operatorAddress, USDG, CHAIN_ID, EXPLORER, IDENTITY } from './chain.js';
-import { json, MODELS, TOOLS, modelsFor, newAgentVersion } from './line.js';
-import { RATES, NETWORK_COST, networkCost, RECEIPT_FORMULA } from './run.js';
+import { json, MODELS, TOOLS, TOOL_FLOOR, modelsFor, newAgentVersion } from './line.js';
+import { RATES, NETWORK_COST, networkCost, RECEIPT_FORMULA, RUN_SPEC } from './run.js';
+import { storedHash } from './revise.js';
+import { publicConnections } from './connect.js';
 import { luxConfig, wholeTokens } from './burn.js';
+import { lockConfig } from './lock.js';
+import { profiles, photoPath } from './profile-api.js';
 
 const address = (a) => String(a.wallet).toLowerCase();
 const FRESH_MS = 60_000; // chain figures are re-read at most once a minute per agent
@@ -15,8 +19,8 @@ async function refresh(env, rows) {
   if (!stale.length) return;
   const c = reader(env);
   // A version 3 wallet keeps more books of its own: who paid it from outside, what it gave back, and who meters it.
-  const V3_BOOKS = ['externalIncome', 'insiderIncome', 'payerCount', 'topPayerPaid', 'totalRefunded', 'customOperator', 'operator', 'payableCount'];
-  const width = (a) => 10 + (a.v === 3 ? V3_BOOKS.length : 0);
+  const V3_BOOKS = ['externalIncome', 'insiderIncome', 'payerCount', 'topPayerPaid', 'totalRefunded', 'customOperator', 'operator', 'payableCount', 'markupBps'];
+  const width = (a) => 10 + (a.v >= 3 ? V3_BOOKS.length : 0);
   const calls = stale.flatMap((a) => {
     const address = getAddress(a.wallet);
     return [
@@ -31,7 +35,7 @@ async function refresh(env, rows) {
       { address: USDG, abi: usdgAbi, functionName: 'balanceOf', args: [address] },
       // the payment wallet the identity registry holds for this agent, if it has an identity
       { address: IDENTITY, abi: registryAbi, functionName: 'getAgentWallet', args: [BigInt(a.identity_id || 0)] },
-      ...(a.v === 3 ? V3_BOOKS.map((functionName) => ({ address, abi: wallet3Abi, functionName })) : []),
+      ...(a.v >= 3 ? V3_BOOKS.map((functionName) => ({ address, abi: functionName === 'markupBps' ? walletAbi : wallet3Abi, functionName })) : []),
     ];
   });
   let out;
@@ -50,8 +54,9 @@ async function refresh(env, rows) {
       withdrawable: withdrawable.toString(), unsettled: unsettled.toString(), paused, named,
       lien: /^0x0{40}$/i.test(lien[0]) ? null : { payee: lien[0], bps: lien[1], cap: lien[2].toString(), paid: lien[3].toString(), unpaid: lienUnpaid.toString() },
     };
-    if (a.v === 3 && r.slice(10).every((x) => x.status === 'success')) {
-      const [externalIncome, insiderIncome, payerCount, topPayerPaid, totalRefunded, customOperator, operator, payableCount] = r.slice(10).map((x) => x.result);
+    if (a.v >= 3 && r.slice(10).every((x) => x.status === 'success')) {
+      const [externalIncome, insiderIncome, payerCount, topPayerPaid, totalRefunded, customOperator, operator, payableCount, markupBps] = r.slice(10).map((x) => x.result);
+      stats.markupBps = Number(markupBps); // this wallet's own fee rate: lower than the standard one if it was built by a wallet with $LUX locked
       if (payableCount > 0n) lists.push({ a, stats, n: Number(payableCount > 12n ? 12n : payableCount) }); else stats.payable = [];
       // Counted by the wallet contract itself as payments arrive through `pay`, net of refunds. customOperator is null while the factory's meter runs the wallet.
       Object.assign(stats, { externalIncome: externalIncome.toString(), insiderIncome: insiderIncome.toString(), payerCount: Number(payerCount), topPayerPaid: topPayerPaid.toString(), totalRefunded: totalRefunded.toString(), customOperator: /^0x0{40}$/i.test(customOperator) ? null : customOperator, operator });
@@ -75,22 +80,38 @@ async function refresh(env, rows) {
 }
 
 // A version 3 agent whose wallet is metered by someone other than us cannot be hired here: it is shown as 'self-run', not 'live'.
-export const selfRun = (env, a, stats) => a.v === 3 && !!stats?.operator && String(stats.operator).toLowerCase() !== operatorAddress(env).toLowerCase();
+export const selfRun = (env, a, stats) => a.v >= 3 && !!stats?.operator && String(stats.operator).toLowerCase() !== operatorAddress(env).toLowerCase();
+
+// An agent's fee rate from the figures last read off its wallet, else the standard rate.
+const feeOf = (env, stats) => { try { const m = (typeof stats === 'string' ? JSON.parse(stats || '{}') : stats || {}).markupBps; return Number.isInteger(m) && m >= 0 && m <= Number(env.MARKUP_BPS) ? m : Number(env.MARKUP_BPS); } catch { return Number(env.MARKUP_BPS); } };
 
 function view(env, a, full) {
   const spec = JSON.parse(a.spec), stats = a.stats ? JSON.parse(a.stats) : null;
   if (a.status === 'live' && selfRun(env, a, stats)) a = { ...a, status: 'self-run' };
   const v = {
-    id: a.id, name: a.name, tagline: spec.tagline, price: String(a.price), model: MODELS[spec.model]?.label, tools: spec.tools,
+    id: a.id, name: a.name, tagline: a.profile?.tagline || spec.tagline, price: String(a.price), model: MODELS[spec.model]?.label, tools: spec.tools,
     wallet: a.wallet, owner: a.owner, status: a.status, identity: a.identity_id, created_at: a.created_at, version: a.v || 1,
     runs: a.runs ?? 0, stats, stats_at: a.stats_at, customers: a.customers || null,
+    // How many versions this agent has had. Its owner can change what it does (src/revise.js); 1 means it is as built.
+    revision: a.rev || 1,
+    // How many outside tool servers its owner has connected (src/connect.js); the page for one agent lists them under `connections`.
+    connected: (spec.connections || []).length,
+    // The fee on top of each run's cost, in basis points, as this agent's wallet contract holds it; `fee_discount` when it is below the standard rate.
+    fee_bps: feeOf(env, a.stats), fee_discount: feeOf(env, a.stats) < Number(env.MARKUP_BPS),
     // Agents hiring agents: who this one may pay during a run (its owner's on-chain list), whom it has paid and who has paid it (billed sub-runs only).
     can_hire: a.can_hire || [], can_hire_agents: a.can_hire_agents || [], hires: a.hires || [], hired_by: a.hired_by || [],
     // Featured: someone burned $LUX to put this agent at the top of the market until this time (see src/feature.js).
     featured_until: a.featured_until || null, featured: !!a.featured_until && Date.parse(a.featured_until) > Date.now(),
   };
+  // The profile its owner set (src/profile-api.js): a picture, and links. `built_tagline` is the line it was built with.
+  v.photo = photoPath(a.id, a.profile); v.links = { x: a.profile?.x || null, site: a.profile?.site || null };
   if (a.lux_burned != null) v.lux_burned = a.lux_burned;
-  if (full) Object.assign(v, { job: spec.job, instructions: spec.instructions, input_hint: spec.input_hint, spec_hash: a.spec_hash, create_tx: a.create_tx });
+  if (full) v.built_tagline = spec.tagline || null;
+  // Each connection: its name, address, the fingerprint of its key if it has one (never the key), and the tools it gives the agent.
+  if (full) v.connections = publicConnections(spec);
+  if (full) Object.assign(v, { job: spec.job, instructions: spec.instructions, input_hint: spec.input_hint, model_key: spec.model, create_tx: a.create_tx,
+    // `spec_hash` is the fingerprint of the version that is live now; `built_spec_hash` the one the factory contract recorded when the agent was made.
+    spec_hash: storedHash(a.spec), built_spec_hash: a.spec_hash, revised_at: a.revised_at || null, revisions: `/api/agents/${a.id}/revisions` });
   return v;
 }
 
@@ -137,7 +158,7 @@ async function relations(env, rows) {
   }
 }
 
-const RECEIPT_COLS = 'r.id, r.agent_id, r.payer, r.paid, r.cost, r.status, r.pay_tx, r.charge_tx, r.attempts, r.tokens_in, r.tokens_out, r.input_hash, r.output_hash, r.created_at, r.finished_at, r.form, r.receipt_hash, r.model_id, r.refund_tx, r.refunded, r.parent, r.sub_paid, a.name, a.wallet, a.spec, a.spec_hash, a.v';
+const RECEIPT_COLS = 'r.id, r.agent_id, r.payer, r.paid, r.cost, r.status, r.pay_tx, r.charge_tx, r.attempts, r.tokens_in, r.tokens_out, r.input_hash, r.output_hash, r.created_at, r.finished_at, r.form, r.receipt_hash, r.model_id, r.refund_tx, r.refunded, r.parent, r.sub_paid, a.name, a.wallet, ' + RUN_SPEC + ' AS spec, COALESCE(r.rev, 1) AS rev, a.v, a.stats';
 const SHOWN = "('ran', 'billed', 'unpaid', 'refunding', 'refunded')";
 
 // GET /api/runs/{id}: the public receipt for one paid run. Anyone can recompute the charge from it.
@@ -148,7 +169,7 @@ export async function getRun(env, id) {
   const r = await env.DB.prepare(`SELECT ${RECEIPT_COLS} FROM runs r JOIN agents a ON a.id = r.agent_id WHERE r.id = ? AND r.status IN ${SHOWN}`).bind(id.toLowerCase()).first();
   if (!r) return null;
   const out = receiptOf(env, r);
-  if (r.v === 3 && !r.parent) {
+  if (r.v >= 3 && !r.parent) {
     const subs = (await env.DB.prepare(`SELECT ${RECEIPT_COLS} FROM runs r JOIN agents a ON a.id = r.agent_id WHERE r.parent = ? AND r.status IN ${SHOWN} ORDER BY r.created_at`).bind(r.id).all()).results;
     out.sub_runs = subs.map((x) => receiptOf(env, x));
   }
@@ -156,17 +177,18 @@ export async function getRun(env, id) {
 }
 
 function receiptOf(env, r) {
-  const spec = JSON.parse(r.spec), model = spec.model in RATES ? spec.model : 'fast', markup = Number(env.MARKUP_BPS);
+  const spec = JSON.parse(r.spec), model = spec.model in RATES ? spec.model : 'fast', markup = feeOf(env, r.stats);
   const fee = r.cost == null ? null : Math.floor((r.cost * markup) / 1e4);
   return {
-    run: r.id, status: r.status, agent: { id: r.agent_id, name: r.name, wallet: r.wallet, spec_hash: r.spec_hash },
+    run: r.id, status: r.status, // `revision` is the version of the agent this run worked under and `spec_hash` that version's fingerprint (GET /api/agents/{id}/revisions lists them all).
+    agent: { id: r.agent_id, name: r.name, wallet: r.wallet, spec_hash: storedHash(r.spec), revision: r.rev },
     payer: r.payer, paid: String(r.paid), payment_tx: r.pay_tx, charge_tx: r.charge_tx, created_at: r.created_at, finished_at: r.finished_at,
     model: r.model_id || MODELS[model].id, attempts: r.attempts, tokens_in: r.tokens_in, tokens_out: r.tokens_out, rates: RATES[model],
     // cost = what the model calls cost (never less than tokens x rates) + the network charge; the wallet is charged cost + fee.
     network_cost: String(networkCost(r.v)), cost: r.cost == null ? null : String(r.cost), markup_bps: markup, fee: fee == null ? null : String(fee),
     charged_to_wallet: fee == null ? null : String(r.cost + fee), input_hash: r.input_hash, output_hash: r.output_hash,
     note: 'Amounts are USDG units (six decimals). Hashes are SHA-256 of the exact input and output text; the input hash is fixed when the payment is first presented. Runs made before receipts existed have no token counts or hashes.',
-    ...(r.v === 3 ? {
+    ...(r.v >= 3 ? {
       wallet_version: 3, payment_form: r.form === 'receive' ? 'ReceiveWithAuthorization' : 'TransferWithAuthorization',
       // The wallet contract publishes this value as `receipt` in the Charged event of the charge (or refund) transaction.
       receipt_hash: r.receipt_hash, receipt_formula: RECEIPT_FORMULA,
@@ -189,6 +211,7 @@ export async function listAgents(env) {
   await refresh(env, rows);
   await customers(env, rows);
   await relations(env, rows);
+  await profiles(env, rows);
   const all = rows.map((a) => view(env, a, false));
   // A retired agent (replaced by a newer one) leaves the floor, but what it earned still counts. So does one its owner now meters.
   const agents = all.filter((a) => a.status !== 'retired' && a.status !== 'self-run');
@@ -203,10 +226,13 @@ export async function getAgent(env, a) {
   await refresh(env, [a]);
   await customers(env, [a]);
   await relations(env, [a]);
+  await profiles(env, [a]);
   // All the $LUX ever burned to feature this agent, in whole tokens. Amounts are kept in token units (18 decimals), as text.
   // (If the burns table is missing the agent's page must still load, so that reads as nothing burned.)
   const burns = (await env.DB.prepare('SELECT amount FROM burns WHERE agent_id = ?').bind(a.id).all().catch(() => ({ results: [] }))).results;
   a.lux_burned = wholeTokens(burns.reduce((n, b) => n + BigInt(b.amount), 0n));
+  // When the live version was saved, for an agent that has been changed.
+  if ((a.rev || 1) > 1) a.revised_at = (await env.DB.prepare('SELECT created_at FROM revisions WHERE agent_id = ? AND rev = ?').bind(a.id, a.rev).first().catch(() => null))?.created_at || null;
   const runs =(await env.DB.prepare("SELECT id, payer, paid, cost, status, pay_tx, charge_tx, created_at FROM runs WHERE agent_id = ? AND status IN ('ran', 'billed', 'unpaid') ORDER BY created_at DESC LIMIT 20").bind(a.id).all()).results;
   return json({ agent: view(env, a, true), recent: runs }, 200, { 'cache-control': 'private, max-age=15' });
 }
@@ -216,11 +242,12 @@ export async function card(env, hash) {
   const a = await env.DB.prepare('SELECT * FROM agents WHERE spec_hash = ?').bind(hash).first();
   if (!a) return json({ error: 'not found' }, 404);
   const spec = JSON.parse(a.spec);
+  await profiles(env, [a]);
   return json({
     type: 'https://eips.ethereum.org/EIPS/eip-8004#registration-v1',
     name: spec.name,
-    description: spec.tagline || spec.job,
-    image: 'https://zerolux.fun/media/lux-token-6.png',
+    description: a.profile?.tagline || spec.tagline || spec.job,
+    image: a.profile?.photo_hash ? 'https://zerolux.fun' + photoPath(a.id, a.profile) : 'https://zerolux.fun/media/lux-token-6.png',
     external_url: `https://zerolux.fun/a/${a.id}`,
     services: [
       { name: 'web', endpoint: `https://zerolux.fun/a/${a.id}` },
@@ -233,7 +260,9 @@ export async function card(env, hash) {
     active: a.status === 'live' && !selfRun(env, a, a.stats ? JSON.parse(a.stats) : null),
     registrations: a.identity_id ? [{ agentId: Number(a.identity_id), agentRegistry: `eip155:${CHAIN_ID}:${IDENTITY}` }] : [],
     supportedTrust: ['reputation'],
-    zerolux: { agent: a.id, wallet: a.wallet, factory: factoryOf(env, a), price: String(a.price), asset: USDG, specHash: a.spec_hash },
+    zerolux: { agent: a.id, wallet: a.wallet, factory: factoryOf(env, a), price: String(a.price), asset: USDG, specHash: a.spec_hash,
+      // The owner can change what the agent does. `specHash` is as built; `liveSpecHash` is the version running now.
+      revision: a.rev || 1, liveSpecHash: storedHash(a.spec), revisions: `https://zerolux.fun/api/agents/${a.id}/revisions` },
   }, 200, { 'cache-control': 'public, max-age=300', 'access-control-allow-origin': '*' });
 }
 
@@ -248,8 +277,10 @@ export function config(env) {
     lux: { address: lux.address, burnAddress: lux.burnAddress, featureAmount: lux.featureAmount, featureDays: lux.featureDays, open: lux.open },
     // `factory` is where new agents are made and `newAgentVersion` its wallet version; `factories` is every factory an agent here may have come from.
     chainId: CHAIN_ID, chainName: 'Robinhood Chain', explorer: EXPLORER, usdg: USDG, factory: factoryOf(env, { v: version }), newAgentVersion: version,
-    factories: [env.FACTORY, env.FACTORY2, env.FACTORY3].filter(Boolean), factoryByVersion: { 1: env.FACTORY || null, 2: env.FACTORY2 || null, 3: env.FACTORY3 || null }, treasury: env.TREASURY,
-    markupBps: Number(env.MARKUP_BPS), identity: IDENTITY, models: modelsFor(version), tools: TOOLS,
+    factories: [env.FACTORY, env.FACTORY2, env.FACTORY3, env.FACTORY4].filter(Boolean), factoryByVersion: { 1: env.FACTORY || null, 2: env.FACTORY2 || null, 3: env.FACTORY3 || null, 4: env.FACTORY4 || null }, treasury: env.TREASURY,
+    // Locking $LUX for a lower fee: the lock contract, and how much locked (for at least `minDays` more days) gives which fee rate to agents that wallet builds.
+    lock: lockConfig(env),
+    markupBps: Number(env.MARKUP_BPS), identity: IDENTITY, models: modelsFor(version), tools: TOOLS, tool_floor: TOOL_FLOOR,
     // What a run is charged: tokens in and out at these rates (USDG units, six decimals, per token), plus the network charge, plus the markup.
     // `networkCost` is the charge for the version new agents get; `networkCosts` lists it for every wallet version.
     rates: RATES, networkCost: networkCost(version), networkCosts: NETWORK_COST,

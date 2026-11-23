@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS agents (
   id INTEGER PRIMARY KEY, wallet TEXT NOT NULL UNIQUE, owner TEXT NOT NULL, name TEXT NOT NULL,
   spec TEXT NOT NULL, spec_hash TEXT NOT NULL UNIQUE, price INTEGER NOT NULL, identity_id TEXT, create_tx TEXT,
   status TEXT NOT NULL DEFAULT 'live', stats TEXT, stats_at TEXT, created_at TEXT NOT NULL,
-  v INTEGER NOT NULL DEFAULT 1, chain_id INTEGER, featured_until TEXT);
+  v INTEGER NOT NULL DEFAULT 1, chain_id INTEGER, featured_until TEXT, rev INTEGER NOT NULL DEFAULT 1);
 -- One row per signed payment, written before the payment is submitted. id = keccak256(payer, nonce).
 -- status: paying -> paid -> running -> ran -> billed; or void (no money moved), unpaid (wallet refused the
 -- charge), forfeit (paid, and its buyer did not come back in time), failed (out of tries with nothing spent).
@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS runs (
   started_at TEXT, finished_at TEXT, held INTEGER NOT NULL DEFAULT 0,
   tokens_in INTEGER NOT NULL DEFAULT 0, tokens_out INTEGER NOT NULL DEFAULT 0, input_hash TEXT, output_hash TEXT,
   form TEXT, receipt_hash TEXT, refund_tx TEXT, refunded INTEGER, model_id TEXT,
-  parent TEXT, sub_paid INTEGER NOT NULL DEFAULT 0, may_hire TEXT);
+  parent TEXT, sub_paid INTEGER NOT NULL DEFAULT 0, may_hire TEXT, rev INTEGER);
 CREATE INDEX IF NOT EXISTS runs_parent ON runs (parent);
 CREATE INDEX IF NOT EXISTS runs_agent ON runs (agent_id, status);
 CREATE INDEX IF NOT EXISTS runs_status ON runs (status, finished_at);
@@ -64,3 +64,42 @@ CREATE TABLE IF NOT EXISTS limits (k TEXT NOT NULL, day TEXT NOT NULL, n INTEGER
 --   ALTER TABLE agents ADD COLUMN featured_until TEXT;
 CREATE TABLE IF NOT EXISTS burns (tx TEXT PRIMARY KEY, agent_id INTEGER NOT NULL, burner TEXT NOT NULL, amount TEXT NOT NULL, created_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS burns_agent ON burns (agent_id);
+-- Agent profiles (added 2026-11-21). One row per agent whose owner has set one: a picture (kept here as bytes, 300 KB at most,
+-- JPEG, PNG or WebP), a tagline shown in place of the built one, an X handle and a website. photo_hash is the SHA-256 of the
+-- picture in hex. signed_at is the time inside the owner's last signed change (a change signed at or before it is refused),
+-- updated_by the owner address that signed, or 'zerolux' when Zero Lux took the profile down. locked = 1 stops further changes.
+-- See src/profile-api.js.
+CREATE TABLE IF NOT EXISTS profiles (
+  agent_id INTEGER PRIMARY KEY, photo BLOB, photo_type TEXT, photo_hash TEXT, tagline TEXT, x TEXT, site TEXT,
+  updated_at TEXT NOT NULL, updated_by TEXT NOT NULL, signed_at TEXT, locked INTEGER NOT NULL DEFAULT 0);
+
+-- Pictures an agent made during a run (the make_image tool). Served from /api/images/<id>, an address nobody can guess,
+-- and deleted after 30 days. run_id and agent_id say which run made it, so a picture can be traced and taken down.
+CREATE TABLE IF NOT EXISTS images (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL,
+  agent_id INTEGER NOT NULL,
+  body BLOB NOT NULL,
+  type TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+-- Editable agents (added 2026-11-23). An owner can change what an agent does; each change is a new version. agents.rev
+-- is the version that is live (1 = as built) and agents.spec, name and price are that version's. agents.spec_hash stays
+-- the fingerprint of version 1, the one the factory contract recorded, and the address of the agent's identity card.
+-- revisions has one row per version of an agent that has been changed at least once (version 1 is copied in at the
+-- first change): the spec as JSON text, its fingerprint, its price, and for every version after the first the owner
+-- address that signed it, the time inside the signed message and the signature. runs.rev is the version a run was
+-- admitted under and works by; NULL on a row from before this existed, which means version 1. See src/revise.js.
+-- A database made before these existed needs, before the code that uses them is deployed:
+--   ALTER TABLE agents ADD COLUMN rev INTEGER NOT NULL DEFAULT 1;
+--   ALTER TABLE runs ADD COLUMN rev INTEGER;
+CREATE TABLE IF NOT EXISTS revisions (
+  agent_id INTEGER NOT NULL, rev INTEGER NOT NULL, spec TEXT NOT NULL, spec_hash TEXT NOT NULL, price INTEGER NOT NULL,
+  signer TEXT, signed_at TEXT, signature TEXT, created_at TEXT NOT NULL, PRIMARY KEY (agent_id, rev));
+
+-- Bring your own tools (added 2026-11-23). An agent's connections to outside tool servers are part of its spec; the key
+-- a connection is called with is not. conn_keys holds each key encrypted (AES-GCM under a key derived from a Worker
+-- secret), found by the fingerprint the spec carries (`k:` and 16 hex characters of an HMAC). Rows are kept when a
+-- connection changes, so a run admitted under an older version can still finish. See src/connect.js.
+CREATE TABLE IF NOT EXISTS conn_keys (agent_id INTEGER NOT NULL, fp TEXT NOT NULL, enc TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (agent_id, fp));

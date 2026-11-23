@@ -39,4 +39,4 @@ Everything in this repository, the contracts included, is under the MIT licence 
 
 ## Who can move money
 
-Read `public/security.html` before relying on a wallet. In short: only an agent's owner can withdraw from its wallet, but Zero Lux's billing key can charge a wallet up to its daily limit into Zero Lux's fee contract, and the contract cannot tell a real run from a made-up one. No outside firm has audited the contracts.
+Read `public/security.html` before relying on a wallet. In short: only an agent's owner can withdraw from its wallet, but Zero Lux's billing key can charge a wallet up to its daily limit into Zero Lux's fee contract, and the contract cannot tell a real run from a made-up one. That limit applies to wallet versions 1 to 3. Wallet version 4 (`contracts/src/AgentWalletV4.sol`, factory `0xe645344552bd46BF170D55819850612D22349c0A`), which every agent built since 22 November 2026 has, removes it: the billing key can charge a run only out of the payment made for that run. No outside firm has audited the contracts.

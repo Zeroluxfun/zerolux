@@ -119,10 +119,10 @@ export const wallet3Abi = parseAbi([
 export const factory3Abi = parseAbi(['function operatorPaused() view returns (bool)']);
 
 // How many version 3 runs are open under the operator key right now. Must be 0 before the key is rotated (see the top of this file).
-export const openV3Runs = async (env) => (await env.DB.prepare("SELECT COUNT(*) AS n FROM runs r JOIN agents a ON a.id = r.agent_id WHERE a.v = 3 AND (r.status IN ('paying', 'paid', 'running', 'ran', 'refunding') OR (r.held > 0 AND r.status IN ('failed', 'forfeit')))").first()).n;
+export const openV3Runs = async (env) => (await env.DB.prepare("SELECT COUNT(*) AS n FROM runs r JOIN agents a ON a.id = r.agent_id WHERE a.v >= 3 AND (r.status IN ('paying', 'paid', 'running', 'ran', 'refunding') OR (r.held > 0 AND r.status IN ('failed', 'forfeit')))").first()).n;
 
 // The factory that made an agent: each wallet version has its own.
-export const factoryOf = (env, agent) => (agent.v === 3 ? env.FACTORY3 : agent.v === 2 ? env.FACTORY2 : env.FACTORY);
+export const factoryOf = (env, agent) => (agent.v === 4 ? env.FACTORY4 : agent.v === 3 ? env.FACTORY3 : agent.v === 2 ? env.FACTORY2 : env.FACTORY);
 // The address our transactions come from. A version 3 hold answers only to the address that opened it.
 export const operatorAddress = (env) => privateKeyToAccount(env.OPERATOR_KEY).address;
 
@@ -215,7 +215,7 @@ export class Signer extends DurableObject {
       } catch { upTo = null; }
       // If the figure could not be worked out, charge without moving the checkpoint at all.
       // A version 3 wallet takes the same two calls with the receipt fingerprint added, and bounds the checkpoint itself.
-      const abi = run.v === 3 ? 'wallet3' : 'wallet', tail = run.v === 3 ? [run.receipt] : [];
+      const abi = run.v >= 3 ? 'wallet3' : 'wallet', tail = run.v >= 3 ? [run.receipt] : [];
       return upTo === null
         ? this._send({ to: run.wallet, abi, functionName: 'charge', args: [run.id, BigInt(run.cost), ...tail] })
         : this._send({ to: run.wallet, abi, functionName: 'chargeAndSettle', args: [run.id, BigInt(run.cost), upTo, ...tail] });

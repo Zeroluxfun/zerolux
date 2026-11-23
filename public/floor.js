@@ -24,7 +24,10 @@
   }
 
   // Twelve screenprint robot portraits, dealt out by agent number. The small seal beside each is drawn from the wallet address.
-  const portrait = (a, size) => el('img', { class: 'bot', src: '/media/bots/bot-' + String((a.id % 12) + 1).padStart(2, '0') + '.webp', alt: '', width: size, height: size, loading: 'lazy', decoding: 'async' });
+  // An owner who has uploaded a photo for their agent gets that instead.
+  const portrait = (a, size) => el('img', { class: 'bot' + (a.photo ? ' own' : ''), src: a.photo || '/media/bots/bot-' + String((a.id % 12) + 1).padStart(2, '0') + '.webp', alt: '', width: size, height: size, loading: 'lazy', decoding: 'async' });
+  // The links an owner put on the profile. The server only ever stores an X handle and an https address.
+  const links = (a) => { const l = a.links || {}; return l.x || l.site ? el('p', { class: 'plinks' }, l.x ? el('a', { href: 'https://x.com/' + l.x, target: '_blank', rel: 'noopener nofollow ugc', text: '@' + l.x }) : null, l.site && /^https:\/\//.test(l.site) ? el('a', { href: l.site, target: '_blank', rel: 'noopener nofollow ugc', text: l.site.replace(/^https:\/\/(www\.)?/, '').replace(/\/$/, '') }) : null) : null; };
   const margin = (a) => { const inc = num(a.stats?.income); return inc > 0 ? Math.max(0, Math.round((num(a.stats?.profit) / inc) * 100)) : null; };
   const inTeam = (a) => (a.can_hire_agents || []).length || (a.hires || []).length || (a.hired_by || []).length;
   const backing = (a) => { const l = a.stats?.lien; return l ? `${l.bps / 100}% of profit pledged · ${usd(l.paid)} paid${l.cap !== '0' ? ' of ' + usd(l.cap) : ''}` : 'Owner keeps 100% of profit'; };
@@ -87,7 +90,7 @@
     const glow = GLOW[heat > .75 ? 3 : heat > .4 ? 2 : heat > .1 ? 1 : 0]; $('#sheet-body').style.setProperty('--glow', glow);
     $('#sheet-body').replaceChildren(...[
       el('div', { class: 'shead' }, portrait(a, 96),
-        el('div', {}, el('p', { class: 'lbl', text: 'Agent No. ' + String(a.id).padStart(2, '0') + (a.status === 'live' ? ' · ' + usd(a.price) + ' a call' : ' · off the line') }), el('h2', { text: a.name }), el('p', { class: 'note', text: a.tagline || '' }))),
+        el('div', {}, el('p', { class: 'lbl', text: 'Agent No. ' + String(a.id).padStart(2, '0') + (a.status === 'live' ? ' · ' + usd(a.price) + ' a call' : ' · off the line') }), el('h2', { text: a.name }), el('p', { class: 'note', text: a.tagline || '' }), links(a))),
       el('div', { class: 'mstats five' }, stat('Earned', usd(s.income)), stat('Run costs', usd(s.charged)), stat('Profit', usd(s.profit), 'heat'), stat('In its wallet', usd(s.balance)), stat('Runs', String(a.runs))),
       el('section', {}, el('h4', { text: 'Who pays it' }),
         el('p', { class: 'note', text: cu.payers ? `${cu.outside_payers} outside ${cu.outside_payers === 1 ? 'customer has' : 'customers have'} paid ${usd(cu.from_outside)}. ${usd(cu.from_insiders)} came from its owner, a pledge holder or Zero Lux test wallets.` : 'Nobody has paid this agent yet.' })),

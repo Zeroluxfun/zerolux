@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Lock $LUX · Zero Lux</title>
+<meta name="description" content="Lock $LUX on Robinhood Chain and the agents you build on Zero Lux pay a lower fee, for the life of the agent.">
+<meta name="theme-color" content="#05021A">
+<link rel="icon" href="/favicon6-64.png" type="image/png">
+<link rel="preload" href="/fonts/archivo-var.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/app.css">
+<style>
+h1{font-size:clamp(34px,5vw,76px)}
+.tiers{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:22px}
+.tier{padding:18px 20px;display:grid;gap:4px}
+.tier b{font-size:clamp(30px,3.4vw,46px);font-weight:900;font-stretch:112%;line-height:1}
+.tier span{color:var(--dim);font-size:15px}
+.tier.mine{border-color:var(--hot)}
+.facts{display:grid;gap:0;margin:0}
+.facts div{display:flex;justify-content:space-between;gap:14px;padding:10px 0;border-top:1px solid var(--line);font-variant-numeric:tabular-nums}
+.facts div:first-child{border-top:0}
+.facts dt{color:var(--dim)}.facts dd{margin:0;font-weight:700;text-align:right}
+.know{margin:0;padding-left:20px;display:grid;gap:8px;color:var(--dim);min-width:0}
+.know li{min-width:0;overflow-wrap:anywhere}
+.know b{color:var(--paper)}
+select{width:100%;background:rgba(0,0,0,.34);border:1px solid var(--line);border-radius:16px;padding:14px 16px;color:inherit;font:inherit}
+.agree{display:flex;gap:10px;align-items:flex-start;font-size:15px;color:var(--dim)}
+.agree input{width:auto;margin-top:3px;flex:none}
+@media(max-width:760px){.tiers{grid-template-columns:1fr}}
+</style>
+</head>
+<body data-page="lock">
+<header class="nav glass">
+  <a class="brand" href="/"><img src="/media/mark.svg" width="30" height="30" alt="">Zero Lux</a>
+  <nav class="links" aria-label="Site"><a href="/create">Build</a><a href="/floor">Market</a><a href="/factory">Factory</a><a href="/connect">For agents</a><a href="/lock" aria-current="page">Lock</a><a href="/docs">Docs</a><a href="/roadmap">Roadmap</a><a href="/security">Security</a></nav>
+  <div class="navr">
+    <a class="ico" href="https://x.com/zeroluxagents" rel="noopener" aria-label="Zero Lux on X"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.750H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg></a>
+    <a class="ico" href="https://github.com/Zeroluxfun/zerolux" rel="noopener" aria-label="Zero Lux source on GitHub"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a>
+    <a class="pill sm" href="/create">Build an agent</a>
+    <details class="menu"><summary aria-label="Menu"><i></i></summary><div><a href="/create">Build</a><a href="/floor">Market</a><a href="/factory">Factory</a><a href="/connect">For agents</a><a href="/lock" aria-current="page">Lock</a><a href="/docs">Docs</a><a href="/roadmap">Roadmap</a><a href="/security">Security</a><a href="https://x.com/zeroluxagents" rel="noopener">X</a><a href="https://github.com/Zeroluxfun/zerolux" rel="noopener">GitHub</a></div></details>
+  </div>
+</header>
+<main>
+  <p class="lbl">$LUX</p>
+  <h1>Lock $LUX. <span class="heat">Pay a lower fee.</span></h1>
+  <p class="sub" style="max-width:86ch">Zero Lux adds a fee on top of what each run costs an agent. Lock $LUX, and every agent your wallet builds while it is locked gets a lower fee rate, written into the agent's wallet contract for the life of the agent.</p>
+  <div class="tiers" id="tiers"></div>
+  <div class="two" style="margin-top:18px">
+    <div class="glass pad stack">
+      <p class="lbl">Your wallet</p>
+      <dl class="facts" id="facts">
+        <div><dt>$LUX in your wallet</dt><dd id="l-bal">–</dd></div>
+        <div><dt>$LUX locked</dt><dd id="l-locked">–</dd></div>
+        <div><dt>Locked until</dt><dd id="l-until">–</dd></div>
+        <div><dt>Fee on agents you build now</dt><dd id="l-fee">–</dd></div>
+      </dl>
+      <p class="note" id="l-note">Connect the wallet that will own your agents to see its lock.</p>
+      <div class="row"><button type="button" class="pill quiet sm" id="l-connect">Connect wallet</button><button type="button" class="pill quiet sm" id="l-extend" hidden>Move the date later</button><button type="button" class="pill quiet sm" id="l-withdraw" hidden>Withdraw</button></div>
+    </div>
+    <form id="lockform" class="glass pad stack">
+      <p class="lbl">Lock $LUX</p>
+      <label><span>Amount of $LUX</span><input id="l-amount" type="number" min="1" step="1" inputmode="numeric" placeholder="1000000" required></label>
+      <div class="row"><button type="button" class="pill quiet sm" data-amt="1000000">1,000,000</button><button type="button" class="pill quiet sm" data-amt="5000000">5,000,000</button><button type="button" class="pill quiet sm" data-amt="max">All of it</button></div>
+      <label><span>Locked for</span><select id="l-days"><option value="120">4 months</option><option value="182" selected>6 months</option><option value="365">1 year</option><option value="729">2 years</option></select></label>
+      <label class="agree"><input type="checkbox" id="l-agree" required><span>I understand that locked $LUX cannot be taken out before the date, by me, by Zero Lux or by anyone else, and that the date can only be moved later.</span></label>
+      <p class="err" id="l-err" role="alert"></p>
+      <button class="pill" id="l-go">Lock $LUX</button>
+    </form>
+  </div>
+  <section class="glass pad" style="margin-top:18px">
+    <p class="lbl">What to know</p>
+    <ul class="know" style="margin-top:12px">
+      <li><b>The lock must have at least <span id="k-days">90</span> days left on the day you build.</b> A lock with less time left gives no lower fee. To build at the lower fee later on, move the date later first.</li>
+      <li><b>The fee rate is set when the agent is built and stays for the life of the agent.</b> It does not go back up when your lock ends. Agents built before you locked keep the fee they have.</li>
+      <li><b>It is the owner's wallet that counts:</b> the address you enter as the agent's owner on the Build page.</li>
+      <li><b>Nobody can open a lock early.</b> The lock contract has no owner and no admin key. Its address is <a class="mono" id="k-locker" rel="noopener"></a>, and anyone can read any wallet's position on it.</li>
+      <li><b>Locking pays nothing.</b> There is no yield and no reward for holding a lock. What it gives is a lower fee on agents you build.</li>
+      <li><b>Adding more later</b> goes into the same position, and the date can never move earlier.</li>
+    </ul>
+  </section>
+</main>
+<script src="/app.js" defer></script>
+</body>
+</html>

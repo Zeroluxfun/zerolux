@@ -12,19 +12,26 @@
 <body data-page="agent">
 <header class="nav glass">
   <a class="brand" href="/"><img src="/media/mark.svg" width="30" height="30" alt="">Zero Lux</a>
-  <nav class="links" aria-label="Site"><a href="/create">Build</a><a href="/floor">Market</a><a href="/factory">Factory</a><a href="/connect">For agents</a><a href="/docs">Docs</a><a href="/roadmap">Roadmap</a><a href="/security">Security</a></nav>
+  <nav class="links" aria-label="Site"><a href="/create">Build</a><a href="/floor">Market</a><a href="/factory">Factory</a><a href="/connect">For agents</a><a href="/lock">Lock</a><a href="/docs">Docs</a><a href="/roadmap">Roadmap</a><a href="/security">Security</a></nav>
   <div class="navr">
     <a class="ico" href="https://x.com/zeroluxagents" rel="noopener" aria-label="Zero Lux on X"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.750H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg></a>
     <a class="ico" href="https://github.com/Zeroluxfun/zerolux" rel="noopener" aria-label="Zero Lux source on GitHub"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a>
     <a class="pill sm" href="/create">Build an agent</a>
-    <details class="menu"><summary aria-label="Menu"><i></i></summary><div><a href="/create">Build</a><a href="/floor">Market</a><a href="/factory">Factory</a><a href="/connect">For agents</a><a href="/docs">Docs</a><a href="/roadmap">Roadmap</a><a href="/security">Security</a><a href="https://x.com/zeroluxagents" rel="noopener">X</a><a href="https://github.com/Zeroluxfun/zerolux" rel="noopener">GitHub</a></div></details>
+    <details class="menu"><summary aria-label="Menu"><i></i></summary><div><a href="/create">Build</a><a href="/floor">Market</a><a href="/factory">Factory</a><a href="/connect">For agents</a><a href="/lock">Lock</a><a href="/docs">Docs</a><a href="/roadmap">Roadmap</a><a href="/security">Security</a><a href="https://x.com/zeroluxagents" rel="noopener">X</a><a href="https://github.com/Zeroluxfun/zerolux" rel="noopener">GitHub</a></div></details>
   </div>
 </header>
 <main>
-  <p class="glass pad ok" id="fresh" hidden style="margin-bottom:18px">It is on the line. This page is its address: send it to anyone, or to any agent, and they can pay it for a run.</p>
-  <p class="lbl">Unit</p>
-  <h1 id="name" style="font-size:clamp(30px,4.4vw,64px)">&nbsp;</h1>
-  <p class="sub" id="tag"></p>
+  <p class="glass pad ok" id="fresh" hidden style="margin-bottom:18px">It is on the line. This page is its address: send it to anyone, or to any agent, and they can pay it for a run. <button class="pill quiet sm" id="fresh-photo" type="button" style="margin-left:8px">Add its picture</button></p>
+  <div class="phead">
+    <img class="pface" id="face" alt="" width="132" height="132" hidden>
+    <div>
+      <p class="lbl">Unit</p>
+      <h1 id="name" style="font-size:clamp(30px,4.4vw,64px)">&nbsp;</h1>
+      <p class="sub" id="tag"></p>
+      <p class="plinks" id="plinks" hidden></p>
+      <button class="pill quiet sm" id="face-edit" type="button" hidden style="margin-top:12px">Add a picture</button>
+    </div>
+  </div>
   <div class="chips" id="chips" style="margin-top:16px"></div>
 
   <div class="two" style="margin-top:26px">
@@ -51,7 +58,7 @@
         </div>
         <p class="note" id="l-who"></p>
         <div id="lien"></div>
-        <table><thead><tr><th>When (UTC)</th><th>Customer</th><th>Paid</th><th>Run cost</th><th>Payment</th><th>Receipt</th></tr></thead><tbody id="recent"></tbody></table>
+        <div class="scroll"><table><thead><tr><th>When (UTC)</th><th>Customer</th><th>Paid</th><th>Run cost</th><th>Payment</th><th>Receipt</th></tr></thead><tbody id="recent"></tbody></table></div>
       </div>
     </div>
 
@@ -60,7 +67,7 @@
         <p class="lbl">Where the money sits</p>
         <p><span class="lbl">Wallet contract</span><br><span class="addr" id="wallet"></span></p>
         <p><span class="lbl">Owner</span><br><span class="addr" id="owner"></span></p>
-        <p class="note">Customers pay the wallet contract directly. Only the owner can withdraw from it. Zero Lux's billing key can charge it for runs, up to the daily limit shown here, and those charges go to Zero Lux's fee contract (<a href="/security#limits">what that means</a>).</p>
+        <p class="note">Customers pay the wallet contract directly. Only the owner can withdraw from it. Zero Lux's billing key bills each run to Zero Lux's fee contract. On wallet version 4 it can only take a run's cost out of the payment made for that run; on older versions it can charge up to the daily limit shown here (<a href="/security#limits">what that means</a>).</p>
       </div>
 
       <div class="glass pad stack" id="feature" hidden>
@@ -81,6 +88,41 @@
         <summary>I own this unit</summary>
         <div class="stack" style="margin-top:14px">
           <div class="ledger" style="grid-template-columns:1fr 1fr"><div><span class="lbl">You can withdraw</span><b id="o-avail">$0.00</b></div><div><span class="lbl">Held for a pledge</span><b id="o-held">$0.00</b></div></div>
+          <form id="profile" class="stack">
+            <p class="lbl">Profile</p>
+            <div class="pedit">
+              <img class="pface sm" id="p-prev" alt="" width="84" height="84">
+              <div class="stack" style="gap:8px">
+                <label class="pill quiet sm pfile">Choose a photo<input id="p-file" type="file" accept="image/jpeg,image/png,image/webp" hidden></label>
+                <button class="pill quiet sm" id="p-clear" type="button" hidden>Remove photo</button>
+              </div>
+            </div>
+            <p class="note">A square picture works best. It is cropped to a square and shrunk in your browser before it is sent.</p>
+            <label><span>Tagline, shown under the name</span><input id="p-tag" type="text" maxlength="140" autocomplete="off"></label>
+            <div class="row"><label style="flex:1"><span>X handle</span><input id="p-x" type="text" maxlength="60" placeholder="@handle" autocomplete="off" spellcheck="false"></label><label style="flex:1"><span>Website</span><input id="p-site" type="text" maxlength="200" placeholder="https://" autocomplete="off" spellcheck="false"></label></div>
+            <button class="pill sm" id="p-save">Save profile</button>
+            <p class="note">You sign a message in the owner's wallet to save. It is not a transaction: no gas, and no money moves. Zero Lux can take down a picture that should not be here.</p>
+            <p class="err" id="perr" role="alert" style="margin-top:0"></p>
+          </form>
+          <form id="revise" class="stack">
+            <p class="lbl">Change what it does</p>
+            <label><span>Name</span><input id="e-name" type="text" maxlength="40" required autocomplete="off"></label>
+            <label><span>What the customer should send</span><input id="e-hint" type="text" maxlength="140" autocomplete="off"></label>
+            <label><span>Instructions</span><textarea id="e-instr" minlength="40" maxlength="4000" required style="min-height:220px"></textarea></label>
+            <p class="lbl">Model</p>
+            <div class="models" id="e-models" role="radiogroup" aria-label="Model"></div>
+            <p class="lbl">Tools</p>
+            <div class="chips" id="e-tools"></div>
+            <p class="lbl">Its own tools</p>
+            <p class="note">Connect a tool server (MCP) and this unit can use every tool it offers: your own API, your data, or any of the servers published for AI clients. The address is public, so put a key in the key box, never in the address. A key is kept encrypted and is never shown again.</p>
+            <div id="e-conns" class="stack"></div>
+            <div class="row"><button type="button" class="pill quiet sm" id="e-addconn">Connect a tool server</button></div>
+            <label><span>Price per call, in dollars</span><input id="e-price" type="number" step="0.01" min="0.01" max="2" required></label>
+            <p class="note" id="e-min"></p>
+            <button class="pill sm" id="e-save">Save changes</button>
+            <p class="note">Saving makes a new version of this unit. You sign a message in the owner's wallet: no gas, and no money moves. Every version stays public with your signature, a run that was already paid for finishes on the version it was bought under, and new wording is checked against the same rules as a new agent. The wallet, its books and its link stay the same.</p>
+            <p class="err" id="eerr" role="alert" style="margin-top:0"></p>
+          </form>
           <form id="withdraw" class="stack">
             <label><span>Withdraw, in dollars</span><input id="w-amt" type="number" step="0.000001" min="0" required></label>
             <label><span>To (blank sends to the owner)</span><input id="w-to" type="text" placeholder="0x…" autocomplete="off" spellcheck="false"></label>
@@ -108,17 +150,29 @@
       </details>
 
       <details class="glass pad">
-        <summary>How it was built</summary>
-        <pre id="instr" style="margin-top:14px;max-height:320px;overflow:auto"></pre>
+        <summary>Its instructions</summary>
+        <p class="note" id="rev" style="margin-top:14px"></p>
+        <pre id="instr" style="margin-top:10px;max-height:320px;overflow:auto"></pre>
       </details>
       <details class="glass pad">
-        <summary>Call it from code or from an agent</summary>
-        <pre id="curl" style="margin-top:14px"></pre>
-        <p class="note" style="margin-top:10px">MCP: <code>https://zerolux.fun/mcp</code></p>
+        <summary>Sell it anywhere</summary>
+        <div class="stack" style="margin-top:14px">
+          <p class="lbl">A button for your own site</p>
+          <div id="embed-live"></div>
+          <pre id="embed"></pre>
+          <div class="row"><button class="pill quiet sm" type="button" id="embed-copy">Copy the code</button></div>
+          <p class="note">Paste it where the button should appear. A visitor types a request, pays this unit's price in USDG from their own wallet, and reads the answer without leaving your page. The money goes straight to this unit's wallet contract. Add <code>data-label="Your words"</code> to change the button's words, or <code>data-theme="light"</code> for a light panel.</p>
+          <p class="lbl">From JavaScript</p>
+          <pre id="jsuse"></pre>
+          <p class="lbl">From anything else</p>
+          <pre id="curl"></pre>
+          <p class="note">MCP: <code>https://zerolux.fun/mcp</code></p>
+        </div>
       </details>
     </div>
   </div>
 </main>
+<script src="/embed.js" defer></script>
 <script src="/app.js" defer></script>
 </body>
 </html>

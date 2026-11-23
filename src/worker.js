@@ -4,6 +4,10 @@ import { hire, sweep } from './run.js';
 import { listAgents, findAgent, getAgent, getRun, card, config } from './api.js';
 import { mcp } from './mcp.js';
 import { feature } from './feature.js';
+import { getImage } from './tools.js';
+import { setProfile, getPhoto, dropProfile } from './profile-api.js';
+import { reviseAgent, revisions } from './revise.js';
+import { lockOf } from './lock.js';
 export { Signer } from './chain.js';
 
 const HOST = 'zerolux.fun';
@@ -44,7 +48,7 @@ async function waitlist(request, env) {
   return Response.json({ ok: true });
 }
 
-const PAGES = { '/create': '/create', '/floor': '/floor', '/connect': '/connect', '/docs': '/docs', '/roadmap': '/roadmap', '/security': '/security', '/factory': '/factory' }; // the asset layer serves x.html at /x
+const PAGES = { '/create': '/create', '/floor': '/floor', '/connect': '/connect', '/docs': '/docs', '/roadmap': '/roadmap', '/security': '/security', '/factory': '/factory', '/lock': '/lock' }; // the asset layer serves x.html at /x
 const open = (res) => { const h = new Headers(res.headers); h.set('access-control-allow-origin', '*'); h.set('access-control-expose-headers', 'payment-required, payment-response, x-payment-response, retry-after'); return new Response(res.body, { status: res.status, headers: h }); };
 
 // Everything the factory does. Until PRODUCT is "on" these routes answer only
@@ -54,7 +58,7 @@ async function routeProduct(request, env, ctx, url) {
   let p; try { p = decodeURIComponent(url.pathname); } catch { return simple('Not found: Zero Lux', 'Nothing at this address.', 404); }
   p = p.replace(/\/{2,}/g, '/').replace(/(.)\/$/, '$1').toLowerCase();
   const m = p.match(/^\/a\/(\d{1,9})(\/run)?$/);
-  const isProduct = p === '/api/line' || p.startsWith('/api/agents') || p.startsWith('/api/runs/') || p === '/api/config' || p.startsWith('/card/') || p === '/mcp' || p === '/skill.md' || p in PAGES || m || ['/create.html', '/floor.html', '/agent.html', '/connect.html', '/docs.html', '/roadmap.html', '/security.html', '/factory.html', '/factory.js', '/vendor/three.module.min.js', '/agent', '/app.js', '/app.css'].includes(p);
+  const isProduct = p === '/api/line' || p.startsWith('/api/agents') || p.startsWith('/api/runs/') || p === '/api/config' || p.startsWith('/api/lock/') || p.startsWith('/card/') || p === '/mcp' || p === '/skill.md' || p in PAGES || m || ['/create.html', '/floor.html', '/agent.html', '/connect.html', '/docs.html', '/roadmap.html', '/security.html', '/factory.html', '/lock.html', '/factory.js', '/vendor/three.module.min.js', '/agent', '/app.js', '/app.css'].includes(p);
   if (!isProduct) return null;
   // An agent's identity card is public from the moment its on-chain identity points at it.
   if (env.PRODUCT !== 'on' && !p.startsWith('/card/')) {
@@ -69,7 +73,10 @@ async function routeProduct(request, env, ctx, url) {
     }
     if (!ok) return simple('Not found: Zero Lux', 'Nothing at this address.', 404);
   }
-  if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS', 'access-control-allow-headers': 'content-type, x-payment, payment-signature, mcp-protocol-version, mcp-session-id', 'access-control-max-age': '86400' } });
+  // A page on another site asking whether it may send a request with a payment or a JSON body here. Only the addresses
+  // made for other sites answer yes: an agent's run address (the embed button, the code library, x402 clients) and the
+  // MCP server. Building or changing an agent from another site's page is not allowed.
+  if (request.method === 'OPTIONS' && ((m && m[2]) || p === '/mcp')) return new Response(null, { status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS', 'access-control-allow-headers': 'content-type, x-payment, payment-signature, mcp-protocol-version, mcp-session-id', 'access-control-max-age': '86400' } });
   const page = (path) => env.ASSETS.fetch(new Request(new URL(path, url), request)).then((res) => {
     const h = secure(new Headers(res.headers)); h.set('cache-control', 'no-cache, no-transform'); return new Response(res.body, { status: res.status, headers: h });
   });
@@ -77,10 +84,11 @@ async function routeProduct(request, env, ctx, url) {
   if (p in PAGES) return page(PAGES[p]);
   if (m && !m[2] && request.method === 'GET') return env.FACTORY && !(await findAgent(env, m[1])) ? simple('Not found: Zero Lux', 'No unit with that number.', 404) : page('/agent');
   if (['/app.js', '/app.css', '/skill.md', '/factory.js', '/vendor/three.module.min.js'].includes(p)) return page(p);
-  if (['/create.html', '/floor.html', '/agent.html', '/connect.html', '/docs.html', '/roadmap.html', '/security.html', '/factory.html'].includes(p)) return simple('Not found: Zero Lux', 'Nothing at this address.', 404);
+  if (['/create.html', '/floor.html', '/agent.html', '/connect.html', '/docs.html', '/roadmap.html', '/security.html', '/factory.html', '/lock.html'].includes(p)) return simple('Not found: Zero Lux', 'Nothing at this address.', 404);
   if (!env.FACTORY || !env.OPERATOR_KEY || !env.RPC_URL) return json({ error: 'The factory is not switched on yet.' }, 503);
   try {
     if (p === '/api/config') return config(env);
+    if (p.startsWith('/api/lock/')) return request.method === 'GET' ? open(await lockOf(request, env, p.slice(10))) : new Response(null, { status: 405, headers: { allow: 'GET' } });
     if (p.startsWith('/api/runs/')) { const r = await getRun(env, p.slice(10)); return r ? open(json(r, 200, { 'cache-control': 'public, max-age=30' })) : json({ error: 'No paid run with that id.' }, 404); }
     if (p === '/api/line') return request.method === 'POST' ? line(request, env) : new Response(null, { status: 405 });
     if (p === '/api/agents') return request.method === 'POST' ? createAgent(request, env) : open(await listAgents(env));
@@ -90,7 +98,26 @@ async function routeProduct(request, env, ctx, url) {
       const a = await findAgent(env, feat[1]);
       return a ? await feature(request, env, a) : json({ error: 'No agent with that number.' }, 404);
     }
+    // Changing an agent: its owner saves a new version with a signed message; every version it has had is public.
+    const rv = p.match(/^\/api\/agents\/(\d{1,9})\/(spec|revisions)$/);
+    if (rv) {
+      const a = await findAgent(env, rv[1]);
+      if (!a) return json({ error: 'No agent with that number.' }, 404);
+      if (rv[2] === 'revisions') return request.method === 'GET' ? open(await revisions(env, a)) : new Response(null, { status: 405, headers: { allow: 'GET' } });
+      return request.method === 'POST' ? await reviseAgent(request, env, a) : json({ error: 'POST the change, signed by the wallet that owns the agent.' }, 405, { allow: 'POST' });
+    }
+    // An agent's profile: its owner sets it with a signed message; the picture is read back from /photo.
+    const prof = p.match(/^\/api\/agents\/(\d{1,9})\/(profile|photo)$/);
+    if (prof && prof[2] === 'photo') return request.method === 'GET' || request.method === 'HEAD' ? getPhoto(request, env, prof[1], url) : new Response(null, { status: 405, headers: { allow: 'GET' } });
+    if (prof) {
+      if (request.method !== 'POST' && request.method !== 'DELETE') return json({ error: 'POST a signed profile to set it.' }, 405, { allow: 'POST' });
+      const a = await findAgent(env, prof[1]);
+      if (!a) return json({ error: 'No agent with that number.' }, 404);
+      return request.method === 'POST' ? await setProfile(request, env, a) : await dropProfile(request, env, a, url);
+    }
     if (p.startsWith('/api/agents/')) { const a = await findAgent(env, p.slice(12)); return a ? open(await getAgent(env, a)) : json({ error: 'not found' }, 404); }
+    const pic = p.match(/^\/api\/images\/([0-9a-f]{32})$/);
+    if (pic) return request.method === 'GET' || request.method === 'HEAD' ? getImage(env, pic[1]) : new Response(null, { status: 405, headers: { allow: 'GET' } });
     if (p.startsWith('/card/')) return card(env, p.slice(6).replace(/\.json$/, ''));
     if (p === '/mcp') return open(await mcp(request, env, ctx));
     if (m && m[2]) {
@@ -128,6 +155,8 @@ export default {
     const h = secure(new Headers(res.headers));
     if (type.includes('text/html')) h.set('cache-control', 'public, max-age=300, no-transform');
     else if (p.startsWith('/fonts/') || p.startsWith('/media/')) h.set('cache-control', 'public, max-age=604800');
+    // The embed button and the code library are loaded by other sites' pages.
+    if (p === '/embed.js' || p === '/zerolux.js') { h.set('access-control-allow-origin', '*'); h.set('cross-origin-resource-policy', 'cross-origin'); h.set('cache-control', 'public, max-age=300'); }
     // Safari will not play a video unless the server answers partial requests, and the asset layer does not.
     if (p.endsWith('.mp4') && res.status === 200) {
       h.set('accept-ranges', 'bytes');
