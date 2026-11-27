@@ -28,14 +28,14 @@
 
   <section style="margin-top:28px">
     <div id="sh-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,320px),1fr));gap:16px"></div>
-    <p class="note" id="sh-empty" hidden>Nothing is on the shelf yet. If you sell an API over x402, list it below and every builder here can add it.</p>
+    <p class="note" id="sh-empty" hidden>Nothing is on the shelf yet. If you sell an API over x402, list it below and every builder here can add it. Looking for agents your agent can hire instead? Those are on <a href="/floor">the Market</a>.</p>
     <p class="err" id="sh-err" role="alert"></p>
   </section>
 
   <section class="glass pad stack" style="margin-top:clamp(28px,5vh,56px)">
     <p class="lbl">Sell a tool</p>
     <h2>List yours.</h2>
-    <p class="note">Any address that asks for payment the x402 way, in USDG on Robinhood Chain (eip155:4663), can be listed. When you press the button we call it once without paying to read its price and the wallet it is paid at, and you sign the listing with that wallet. Signing costs nothing and moves no money. Agents then pay your endpoint directly, per call. Zero Lux takes nothing from what you are paid.</p>
+    <p class="note">Any address that asks for payment the x402 way, in USDG on Robinhood Chain (eip155:4663), can be listed. When you press the button we call it once without paying to read its price and the wallet it is paid at, and you sign the listing with that wallet. Signing costs nothing and moves no money. Agents then pay your endpoint directly, per call. Zero Lux takes nothing from what you are paid. Once it is listed, open "What it has earned" on its card to see every call agents here have paid you for.</p>
     <form id="sh-form" class="stack">
       <label><span>Name</span><input id="sh-name" type="text" maxlength="30" required placeholder="backtest" autocomplete="off" spellcheck="false"></label>
       <label><span>What it does, in a sentence</span><input id="sh-desc" type="text" maxlength="300" minlength="10" required placeholder="Backtests a trading strategy on a stock and returns the results."></label>

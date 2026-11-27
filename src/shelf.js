@@ -1,6 +1,7 @@
 // The tool shelf: paid tools anyone can list, and any builder can give to an agent.
 //   GET  /api/shelf              the tools on the shelf
 //   POST /api/shelf              list a tool, or update one (two steps: prepare, then the same fields signed)
+//   GET  /api/shelf/:id         one listing, with what agents here have paid it
 //   POST /api/shelf/:id/remove   take a tool off (signed by the same wallet), or with the build key
 //
 // A listing is a paid tool (src/paytools.js) with a name and a sentence saying what it does. Who may list one: the
@@ -70,6 +71,19 @@ export async function shelfTools(env, ids) {
   if (rows.length !== want.length) throw Object.assign(new Error('One of those tools is no longer on the shelf.'), { status: 409 });
   const byId = new Map(rows.map((r) => [r.id, r]));
   return buildPaid(env, want.map((id) => { const r = byId.get(id); return { name: r.name, description: r.description, url: r.url, method: r.method, max: r.price, ...(r.example ? { example: r.example } : {}), price: r.price, pay_to: r.pay_to }; }));
+}
+
+// One listing and what it has been paid by agents here: calls, the total of the calls that delivered, and the last
+// few payments. Counted from the payments Zero Lux signed for this tool by name, at this host, to this payee. Every
+// figure is already public on chain; it is kept off the shelf itself so the seller reads it, not every visitor.
+export async function shelfEarnings(env, id) {
+  const r = await env.DB.prepare("SELECT * FROM shelf WHERE id = ? AND status = 'listed'").bind(id).first();
+  if (!r) return json({ error: 'There is no tool on the shelf with that id.' }, 404);
+  const where = 'FROM tool_payments WHERE tool = ? AND host = ? AND lower(pay_to) = ?', who = [r.name, r.host, String(r.pay_to).toLowerCase()];
+  const sum = await env.DB.prepare(`SELECT COUNT(*) AS calls, COALESCE(SUM(CASE WHEN status = 'delivered' THEN 1 ELSE 0 END), 0) AS delivered, COALESCE(SUM(CASE WHEN status = 'delivered' THEN amount ELSE 0 END), 0) AS earned, COUNT(DISTINCT agent_id) AS agents ${where}`).bind(...who).first();
+  const last = (await env.DB.prepare(`SELECT run, agent_id, amount, status, tx, at ${where} ORDER BY id DESC LIMIT 10`).bind(...who).all()).results;
+  return json({ ...shown(r), calls: Number(sum.calls), delivered: Number(sum.delivered), earned: String(sum.earned), agents: Number(sum.agents), payments: last.map((p) => ({ run: p.run, agent_id: p.agent_id, amount: String(p.amount), status: p.status, tx: p.tx || null, at: p.at })),
+    note: 'USDG units (six decimals). "earned" counts calls the tool answered after being paid. Payments go from the agent side straight to pay_to; Zero Lux holds none of it.' }, 200, { 'cache-control': 'public, max-age=30' });
 }
 
 export async function listTool(request, env, deps = {}) {

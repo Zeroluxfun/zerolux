@@ -16,7 +16,7 @@ import { getDeliver, setDeliver, telegramHook } from './deliver.js';
 import { listTemplates, makeDraft, setCopying } from './templates-api.js';
 import { reviseAgent, revisions } from './revise.js';
 import { setVerifiedOnly, tapTick } from './tap-api.js';
-import { getShelf, listTool, removeTool, shelfTick, shelfTools } from './shelf.js';
+import { getShelf, listTool, removeTool, shelfTick, shelfTools, shelfEarnings } from './shelf.js';
 import { lockOf } from './lock.js';
 export { Signer } from './chain.js';
 export { JobRunner } from './jobs.js';
@@ -134,6 +134,8 @@ async function routeProduct(request, env, ctx, url) {
     // Templates, starting from another agent, and changing a draft's wording before it is built.
     // The tool shelf (src/shelf.js): paid tools anyone can list and any builder can give to an agent.
     if (p === '/api/shelf') return request.method === 'POST' ? listTool(request, env) : open(await getShelf(env));
+    const one = p.match(/^\/api\/shelf\/([0-9a-f]{16})$/);
+    if (one) return request.method === 'GET' ? open(await shelfEarnings(env, one[1])) : new Response(null, { status: 405, headers: { allow: 'GET' } });
     const sh = p.match(/^\/api\/shelf\/([0-9a-f]{16})\/remove$/);
     if (sh) return request.method === 'POST' ? removeTool(request, env, sh[1]) : new Response(null, { status: 405, headers: { allow: 'POST' } });
     if (p === '/api/templates') return request.method === 'GET' ? open(listTemplates(env)) : new Response(null, { status: 405, headers: { allow: 'GET' } });

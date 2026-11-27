@@ -8,7 +8,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 
 registerHooks({ resolve(spec, ctx, next) { return spec === 'cloudflare:workers' ? { url: 'data:text/javascript,export class DurableObject{constructor(c,e){this.ctx=c;this.env=e}}', shortCircuit: true } : next(spec, ctx); } });
-const { getShelf, listTool, removeTool, shelfTools, shelfTick, shelfId, listMessage } = await import('../src/shelf.js');
+const { getShelf, listTool, removeTool, shelfTools, shelfTick, shelfId, listMessage, shelfEarnings } = await import('../src/shelf.js');
 const { USDG } = await import('../src/chain.js');
 
 const seller = privateKeyToAccount(generatePrivateKey()), stranger = privateKeyToAccount(generatePrivateKey());
@@ -116,4 +116,22 @@ test('a listing that changes its payee or stops answering drops off after three 
   await assert.rejects(shelfTools(e, [d.id]), /no longer on the shelf/);
   // Its lister lists it again, signed by the wallet it is paid at now, and it is back.
   ep.payTo = seller.address; assert.equal((await list(e, ep)).s, 200); assert.equal((await read(await getShelf(e))).d.tools.length, 1);
+});
+
+test('a listing shows what agents have paid it, and only its own payments', async () => {
+  const e = env(), ep = endpoint();
+  const { d } = await list(e, ep); assert.equal(d.ok, true);
+  const none = await read(await shelfEarnings(e, d.id));
+  assert.equal(none.s, 200); assert.equal(none.d.calls, 0); assert.equal(none.d.earned, '0'); assert.deepEqual(none.d.payments, []);
+  const pay = (tool, host, to, amount, status, run, agent) => e.DB.raw.prepare("INSERT INTO tool_payments (run, agent_id, tool, host, pay_to, amount, nonce, status, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(run, agent, tool, host, to, amount, '0x' + run, status, new Date().toISOString());
+  pay('backtest', 'tools.example', seller.address.toLowerCase(), 30000, 'delivered', 'r1', 4);
+  pay('backtest', 'tools.example', seller.address, 30000, 'delivered', 'r2', 5);
+  pay('backtest', 'tools.example', seller.address, 30000, 'not delivered', 'r3', 5);
+  pay('backtest', 'other.example', seller.address, 30000, 'delivered', 'r4', 6); // another host
+  pay('backtest', 'tools.example', stranger.address, 30000, 'delivered', 'r5', 6); // another payee
+  pay('scan', 'tools.example', seller.address, 20000, 'delivered', 'r6', 6); // another tool
+  const got = await read(await shelfEarnings(e, d.id));
+  assert.equal(got.d.calls, 3); assert.equal(got.d.delivered, 2); assert.equal(got.d.earned, '60000'); assert.equal(got.d.agents, 2);
+  assert.deepEqual(got.d.payments.map((p) => p.run), ['r3', 'r2', 'r1']);
+  assert.equal((await shelfEarnings(e, '0'.repeat(16))).status, 404);
 });

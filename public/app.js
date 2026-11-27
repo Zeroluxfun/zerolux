@@ -1202,7 +1202,16 @@ if ($('#shelf-page')) {
           } catch (x) { err.textContent = explain(x); }
           b.disabled = false;
         } })),
-      el('p', { class: 'note', text: 'Already have an agent? Open its page, then Change what it does, then Add from the shelf.' }))));
+      el('p', { class: 'note', text: 'Already have an agent? Open its page, then Change what it does, then Add from the shelf.' }),
+      el('details', { ontoggle: async (e) => {
+        const d = e.currentTarget, out = d.querySelector('div'); if (!d.open || d.dataset.got) return; d.dataset.got = '1';
+        const r = await api('/api/shelf/' + t.id, null, {}, { cache: 'no-store' });
+        if (!r.ok) { delete d.dataset.got; out.replaceChildren(el('p', { class: 'note', text: 'That could not be read just now.' })); return; }
+        const x = r.data;
+        out.replaceChildren(
+          el('p', { class: 'note', text: x.calls ? `Paid ${usd(x.earned)} over ${x.delivered} ${x.delivered === 1 ? 'call' : 'calls'}, by ${x.agents} ${x.agents === 1 ? 'agent' : 'agents'}.` + (x.calls > x.delivered ? ` ${x.calls - x.delivered} more were paid for and not answered.` : '') : 'No agent has called it yet.' }),
+          ...(x.payments || []).map((p) => el('p', { class: 'note' }, new Date(p.at).toLocaleString() + ' · ' + usd(p.amount) + ' · ' + p.status + ' · ', el('a', { href: '/api/runs/' + p.run, text: 'receipt' }))));
+      } }, el('summary', { class: 'note', text: 'What it has earned' }), el('div', { class: 'stack' })))));
   };
   load();
   $('#sh-form').addEventListener('submit', async (e) => {

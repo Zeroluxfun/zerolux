@@ -258,7 +258,7 @@ export async function floatAlert(env) {
   const day = now().slice(0, 10);
   const first = await env.DB.prepare('INSERT OR IGNORE INTO limits (k, day, n) VALUES (?, ?, 1)').bind('floatalert', day).run();
   if (!first.meta.changes) return { sent: false, low: true };
-  const text = `Zero Lux: the wallet that pays agents for card runs is low. It holds ${dollars(float)} in USDG and customers hold ${dollars(owed)} of unspent credit. Card runs stop when it is empty. Send USDG on Robinhood Chain to ${payer}.`;
+  const text = `Zero Lux: the wallet that pays agents for card runs, and pays for agents' paid tools, is low. It holds ${dollars(float)} in USDG and customers hold ${dollars(owed)} of unspent credit. Card runs and paid tool calls stop when it is empty. Send USDG on Robinhood Chain to ${payer}.`;
   const res = await fetch(hook, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ content: text, text }), signal: AbortSignal.timeout(10_000) }).catch(() => null);
   // A notice that did not go out is tried again on the next tick.
   if (!res || !res.ok) await env.DB.prepare('DELETE FROM limits WHERE k = ? AND day = ?').bind('floatalert', day).run();
