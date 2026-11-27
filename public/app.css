@@ -47,7 +47,8 @@ textarea:focus,input:focus{border-color:var(--amber);box-shadow:0 0 0 4px rgba(2
 label{display:grid;gap:8px}
 
 /* the line: five stations that heat up as the job moves through */
-.stations{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin:22px 0 4px}
+.stations{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin:22px 0 4px}
+@media (max-width:460px){.stations{gap:5px}.stations .station{font-size:9.5px;letter-spacing:.04em;padding-inline:2px}}
 .station{border-radius:14px;border:1px solid var(--line);padding:12px 10px;text-align:center;background:rgba(21,10,74,.5);transition:background .5s,box-shadow .5s,color .5s;font-size:12px}
 .station.on{background:linear-gradient(160deg,var(--hot),var(--magenta));box-shadow:0 0 34px -4px var(--hot);color:#fff}
 .station.done{background:linear-gradient(160deg,var(--amber),var(--white-hot));color:#170403;box-shadow:0 0 22px -8px var(--amber)}
@@ -169,3 +170,16 @@ details summary{cursor:pointer;font-weight:700}
 .pedit{display:flex;gap:16px;align-items:center}
 .pfile{cursor:pointer;justify-self:start}
 @media (max-width:640px){.phead{flex-direction:column;align-items:flex-start;gap:16px}.pface{width:96px;height:96px;border-radius:20px}}
+.out p{margin:0 0 .65em}.out ul,.out ol{margin:0 0 .65em;padding-left:1.4em}.out li{margin:.15em 0}.out h3,.out h4{margin:.6em 0 .35em;font-size:1.06em;line-height:1.3;font-weight:800;text-transform:none;letter-spacing:0}.out code{font-family:ui-monospace,Menlo,monospace;font-size:.92em;background:rgba(127,127,127,.2);padding:1px 5px;border-radius:5px}.out pre{margin:0 0 .65em;padding:10px 12px;border-radius:10px;background:rgba(127,127,127,.16);overflow:auto;white-space:pre}.out pre code{background:none;padding:0}.out hr{border:0;border-top:1px solid var(--line);margin:.7em 0}.out a{text-decoration:underline;text-underline-offset:2px}.out>:first-child{margin-top:0}.out>:last-child{margin-bottom:0}
+
+/* rating a paid answer, and reviews on an agent's page */
+.rate{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;font-size:14px}.rate-l{color:var(--dim)}.rate-s{display:inline-flex;gap:2px}.rate-x{background:none;border:0;padding:2px;font-size:22px;line-height:1;cursor:pointer;color:var(--dim);opacity:.55}.rate-x.on{color:#FFB000;opacity:1}.rate-x:focus-visible{outline:2px solid #FFB000;outline-offset:2px}.rate-t{flex:1 1 180px;min-width:0}.rate-m{color:#FF7A59;flex-basis:100%}.rate-m:empty{display:none}
+.rv{display:grid;gap:4px;padding:10px 0;border-top:1px solid var(--line)}.rv:first-child{border-top:0;padding-top:0}.rv-s{color:#FFB000;letter-spacing:2px}.rv p{margin:0;overflow-wrap:anywhere}
+/* form fields the pages gained later: choices and web addresses */
+select,input[type=url]{background:rgba(0,0,0,.34);border:1px solid var(--line);border-radius:16px;padding:12px 14px;outline:none;font:inherit;color:inherit;min-width:0}input[type=url]{width:100%}select option{background:#0B0626;color:#F3F1EA}select:focus-visible,input[type=url]:focus-visible{border-color:var(--hot)}
+
+/* files: attached chips, downloads from an answer, and printing one answer */
+.chipx{background:none;border:0;color:inherit;cursor:pointer;font:inherit;padding:0 0 0 6px;opacity:.7}.chipx:hover{opacity:1}
+.out .dl{margin:-.2em 0 .8em;font-size:13px}.out .dl a,.keep a{text-decoration:underline;text-underline-offset:2px}
+.keep{gap:14px;margin-top:12px;font-size:13px}.linkish{background:none;border:0;padding:0;cursor:pointer;text-decoration:underline;text-underline-offset:2px;font-family:inherit}
+@media print{body.printing *{visibility:hidden!important}body.printing .print-me,body.printing .print-me *{visibility:visible!important;color:#000!important}body.printing .print-me{position:absolute;left:0;top:0;width:100%;max-height:none!important;overflow:visible!important;background:#fff!important;border:0!important;padding:0!important}body.printing .keep,body.printing .dl{display:none!important}}

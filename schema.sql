@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS runs (
   started_at TEXT, finished_at TEXT, held INTEGER NOT NULL DEFAULT 0,
   tokens_in INTEGER NOT NULL DEFAULT 0, tokens_out INTEGER NOT NULL DEFAULT 0, input_hash TEXT, output_hash TEXT,
   form TEXT, receipt_hash TEXT, refund_tx TEXT, refunded INTEGER, model_id TEXT,
-  parent TEXT, sub_paid INTEGER NOT NULL DEFAULT 0, may_hire TEXT, rev INTEGER);
+  parent TEXT, sub_paid INTEGER NOT NULL DEFAULT 0, may_hire TEXT, rev INTEGER, tap TEXT);
 CREATE INDEX IF NOT EXISTS runs_parent ON runs (parent);
 CREATE INDEX IF NOT EXISTS runs_agent ON runs (agent_id, status);
 CREATE INDEX IF NOT EXISTS runs_status ON runs (status, finished_at);
@@ -112,3 +112,59 @@ CREATE TABLE IF NOT EXISTS credit_events (
   state TEXT NOT NULL DEFAULT 'closed', created_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS credit_events_account ON credit_events (account);
 CREATE INDEX IF NOT EXISTS credit_events_open ON credit_events (state, kind);
+
+-- Reviews (added 2026-11-24). One row per paid run its buyer rated: one to five stars and up to 280 characters of plain
+-- text. Whoever posts one proves the purchase with a token that came with the run's answer. hidden = 1 is a review
+-- Zero Lux took down. See src/reviews.js.
+CREATE TABLE IF NOT EXISTS reviews (run_id TEXT PRIMARY KEY, agent_id INTEGER NOT NULL, stars INTEGER NOT NULL, body TEXT, hidden INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS reviews_agent ON reviews (agent_id, hidden);
+-- Free samples (added 2026-11-24). One row per agent whose owner has set it: whether visitors may try the agent once for
+-- free, how many a day at most, and the credit account (src/credits.js) the price of each sample is taken from. signer and
+-- signed_at are the owner address and the time inside the signed message that last changed it. See src/samples.js.
+CREATE TABLE IF NOT EXISTS samples (agent_id INTEGER PRIMARY KEY, account TEXT, per_day INTEGER NOT NULL DEFAULT 10, enabled INTEGER NOT NULL DEFAULT 0, signer TEXT, signed_at TEXT, updated_at TEXT NOT NULL);
+
+-- Standing orders (added 2026-11-24). subs has one row per order: whose credit pays (account), which agent, the request it
+-- works on each time, how often (every: hour, day, week, or watch with a coin, a side and a price in `watch`; hours are UTC),
+-- the price it was set up at (max_price: a dearer agent stops it), an optional webhook for results, and where it stands
+-- (status: on, paused, ended; reason says why it stopped by itself). armed is a price watch that may fire.
+-- deliveries has one row per run an order owed: its request, the run it became, and the result, kept 30 days for the
+-- customer's inbox. `review` is the review code that came with the answer. See src/subs.js.
+CREATE TABLE IF NOT EXISTS subs (id TEXT PRIMARY KEY, account TEXT NOT NULL, agent_id INTEGER NOT NULL, input TEXT NOT NULL, every TEXT NOT NULL, hour INTEGER NOT NULL DEFAULT 0, dow INTEGER NOT NULL DEFAULT 0, watch TEXT, armed INTEGER NOT NULL DEFAULT 0, max_price INTEGER NOT NULL, webhook TEXT, status TEXT NOT NULL DEFAULT 'on', reason TEXT, fails INTEGER NOT NULL DEFAULT 0, runs INTEGER NOT NULL DEFAULT 0, next_at TEXT NOT NULL, last_at TEXT, created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS subs_account ON subs (account, status);
+CREATE INDEX IF NOT EXISTS subs_due ON subs (status, every, next_at);
+CREATE TABLE IF NOT EXISTS deliveries (id TEXT PRIMARY KEY, sub_id TEXT NOT NULL, account TEXT NOT NULL, agent_id INTEGER NOT NULL, run_id TEXT, ticket TEXT NOT NULL, input TEXT NOT NULL, note TEXT, status TEXT NOT NULL, output TEXT, paid INTEGER, error TEXT, review TEXT, tries INTEGER NOT NULL DEFAULT 0, sent INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, finished_at TEXT);
+CREATE INDEX IF NOT EXISTS deliveries_account ON deliveries (account, created_at);
+CREATE INDEX IF NOT EXISTS deliveries_status ON deliveries (status, created_at);
+
+-- Long jobs: one agent run in steps on one big piece of work. jobs has one row per job; job_steps one row per step it
+-- owed (a working step leaves notes, the last step writes the result). Kept 30 days. See src/jobs.js.
+CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, account TEXT NOT NULL, agent_id INTEGER NOT NULL, goal TEXT NOT NULL, max_steps INTEGER NOT NULL, max_price INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'working', reason TEXT, next TEXT, wrap INTEGER NOT NULL DEFAULT 0, steps INTEGER NOT NULL DEFAULT 0, paid INTEGER NOT NULL DEFAULT 0, report TEXT, run_id TEXT, review TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, finished_at TEXT);
+CREATE TABLE IF NOT EXISTS job_steps (id TEXT PRIMARY KEY, job_id TEXT NOT NULL, seq INTEGER NOT NULL, n INTEGER NOT NULL, round INTEGER NOT NULL DEFAULT 0, kind TEXT NOT NULL, ticket TEXT NOT NULL, input TEXT NOT NULL, status TEXT NOT NULL, title TEXT, output TEXT, paid INTEGER, run_id TEXT, error TEXT, tries INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, finished_at TEXT);
+CREATE INDEX IF NOT EXISTS jobs_account ON jobs (account, created_at);
+CREATE INDEX IF NOT EXISTS jobs_status ON jobs (status, updated_at);
+CREATE INDEX IF NOT EXISTS job_steps_job ON job_steps (job_id, seq);
+
+-- Files a customer attached to a request: the text their browser read out of a document, or a small JPEG. The id is
+-- the only key. Deleted once keep_until has passed. See src/files.js.
+CREATE TABLE IF NOT EXISTS files (id TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL, note TEXT, size INTEGER NOT NULL, chars INTEGER NOT NULL DEFAULT 0, text TEXT, data BLOB, created_at TEXT NOT NULL, keep_until TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS files_keep ON files (keep_until);
+
+-- Where a credit account's results are sent when nobody is on the site (src/deliver.js), and small facts the Worker keeps.
+CREATE TABLE IF NOT EXISTS routes (account TEXT PRIMARY KEY, webhook TEXT, tg_chat TEXT, tg_code TEXT, tg_code_at TEXT, updated_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS routes_code ON routes (tg_code);
+CREATE TABLE IF NOT EXISTS settings (k TEXT PRIMARY KEY, v TEXT NOT NULL);
+
+-- Whether an agent's owner has stopped others starting a new agent from it (src/templates-api.js). No row means allowed.
+CREATE TABLE IF NOT EXISTS copying (agent_id INTEGER PRIMARY KEY, off INTEGER NOT NULL DEFAULT 0, signer TEXT, signed_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+
+-- Verified agents (src/tap-api.js). tap_only: whether an agent's owner takes work only by a request a verified agent
+-- signed; no row means anyone. tap_nonces: each signature's key and nonce, with the run it was used for, so one
+-- signature buys one run. runs.tap (added by ALTER TABLE on 2026-11-26): who signed the request that paid for a run.
+CREATE TABLE IF NOT EXISTS tap_only (agent_id INTEGER PRIMARY KEY, required INTEGER NOT NULL DEFAULT 0, signer TEXT, signed_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS tap_nonces (id TEXT PRIMARY KEY, run TEXT NOT NULL, expires INTEGER NOT NULL);
+
+-- Paid tools (src/paytools.js): every payment a run made to an outside tool over x402, written before it is sent.
+-- amount is USDG units; status is 'sent', 'delivered' or 'not delivered'; tx is the settlement the tool reported, if any.
+CREATE TABLE IF NOT EXISTS tool_payments (id INTEGER PRIMARY KEY AUTOINCREMENT, run TEXT NOT NULL, agent_id INTEGER NOT NULL, tool TEXT NOT NULL, host TEXT NOT NULL, pay_to TEXT NOT NULL, amount INTEGER NOT NULL, nonce TEXT NOT NULL, status TEXT NOT NULL, tx TEXT, at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS tool_payments_run ON tool_payments (run);
+CREATE INDEX IF NOT EXISTS tool_payments_at ON tool_payments (at);

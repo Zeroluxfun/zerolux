@@ -1,15 +1,24 @@
 // Zero Lux Worker: the site, the line (job to agent), paid runs, the floor, MCP.
 import { line, createAgent, json, allow, clientKey, hasBuildKey } from './line.js';
 import { hire, sweep } from './run.js';
-import { listAgents, findAgent, getAgent, getRun, card, config } from './api.js';
+import { listAgents, findAgent, getAgent, getRun, card, config, ownerBoard } from './api.js';
 import { mcp } from './mcp.js';
 import { feature } from './feature.js';
 import { getImage } from './tools.js';
 import { setProfile, getPhoto, dropProfile } from './profile-api.js';
-import { balance, checkout, confirm, webhook, afterCard, settleCard, cardStatus } from './credits.js';
+import { balance, checkout, confirm, webhook, afterCard, settleCard, cardStatus, floatAlert } from './credits.js';
+import { setSample } from './samples.js';
+import { createSub, listSubs, changeSub, subsTick } from './subs.js';
+import { withReview, postReview, hideReview } from './reviews.js';
+import { createJob, listJobs, getJob, changeJob, jobsTick } from './jobs.js';
+import { putFile, fileInfo, filesTick } from './files.js';
+import { getDeliver, setDeliver, telegramHook } from './deliver.js';
+import { listTemplates, makeDraft, setCopying } from './templates-api.js';
 import { reviseAgent, revisions } from './revise.js';
+import { setVerifiedOnly, tapTick } from './tap-api.js';
 import { lockOf } from './lock.js';
 export { Signer } from './chain.js';
+export { JobRunner } from './jobs.js';
 
 const HOST = 'zerolux.fun';
 const CSP = "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
@@ -49,7 +58,7 @@ async function waitlist(request, env) {
   return Response.json({ ok: true });
 }
 
-const PAGES = { '/create': '/create', '/floor': '/floor', '/connect': '/connect', '/docs': '/docs', '/roadmap': '/roadmap', '/security': '/security', '/factory': '/factory', '/lock': '/lock' }; // the asset layer serves x.html at /x
+const PAGES = { '/create': '/create', '/floor': '/floor', '/connect': '/connect', '/docs': '/docs', '/roadmap': '/roadmap', '/security': '/security', '/factory': '/factory', '/lock': '/lock', '/pay': '/pay', '/dashboard': '/dashboard', '/inbox': '/inbox', '/job': '/job' }; // the asset layer serves x.html at /x
 const open = (res) => { const h = new Headers(res.headers); h.set('access-control-allow-origin', '*'); h.set('access-control-expose-headers', 'payment-required, payment-response, x-payment-response, retry-after'); return new Response(res.body, { status: res.status, headers: h }); };
 
 // Everything the factory does. Until PRODUCT is "on" these routes answer only
@@ -59,7 +68,8 @@ async function routeProduct(request, env, ctx, url) {
   let p; try { p = decodeURIComponent(url.pathname); } catch { return simple('Not found: Zero Lux', 'Nothing at this address.', 404); }
   p = p.replace(/\/{2,}/g, '/').replace(/(.)\/$/, '$1').toLowerCase();
   const m = p.match(/^\/a\/(\d{1,9})(\/run)?$/);
-  const isProduct = p === '/api/line' || p.startsWith('/api/agents') || p.startsWith('/api/runs/') || p === '/api/config' || p.startsWith('/api/credits') || p === '/api/stripe/webhook' || p.startsWith('/api/lock/') || p.startsWith('/card/') || p === '/mcp' || p === '/skill.md' || p in PAGES || m || ['/create.html', '/floor.html', '/agent.html', '/connect.html', '/docs.html', '/roadmap.html', '/security.html', '/factory.html', '/lock.html', '/factory.js', '/vendor/three.module.min.js', '/agent', '/app.js', '/app.css'].includes(p);
+  const rvw = p.match(/^\/api\/runs\/(0x[0-9a-f]{64})\/review$/);
+  const isProduct = p === '/api/line' || p === '/api/templates' || p === '/api/drafts' || p.startsWith('/api/agents') || p.startsWith('/api/runs/') || p === '/api/config' || p.startsWith('/api/credits') || p.startsWith('/api/subs') || p.startsWith('/api/jobs') || p.startsWith('/api/files') || p === '/api/deliver' || p === '/api/telegram/hook' || p === '/api/stripe/webhook' || p.startsWith('/api/lock/') || p.startsWith('/api/owners/') || p.startsWith('/card/') || p === '/mcp' || p === '/skill.md' || p in PAGES || m || ['/create.html', '/floor.html', '/agent.html', '/connect.html', '/docs.html', '/roadmap.html', '/security.html', '/factory.html', '/lock.html', '/pay.html', '/dashboard.html', '/inbox.html', '/job.html', '/pay.js', '/factory.js', '/vendor/three.module.min.js', '/agent', '/app.js', '/app.css'].includes(p);
   if (!isProduct) return null;
   // An agent's identity card is public from the moment its on-chain identity points at it.
   if (env.PRODUCT !== 'on' && !p.startsWith('/card/')) {
@@ -77,7 +87,7 @@ async function routeProduct(request, env, ctx, url) {
   // A page on another site asking whether it may send a request with a payment or a JSON body here. Only the addresses
   // made for other sites answer yes: an agent's run address (the embed button, the code library, x402 clients) and the
   // MCP server. Building or changing an agent from another site's page is not allowed.
-  if (request.method === 'OPTIONS' && ((m && m[2]) || p === '/mcp')) return new Response(null, { status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS', 'access-control-allow-headers': 'content-type, x-payment, payment-signature, mcp-protocol-version, mcp-session-id', 'access-control-max-age': '86400' } });
+  if (request.method === 'OPTIONS' && ((m && m[2]) || p === '/mcp' || rvw)) return new Response(null, { status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS', 'access-control-allow-headers': 'content-type, x-payment, x-sample, payment-signature, mcp-protocol-version, mcp-session-id', 'access-control-max-age': '86400' } });
   const page = (path) => env.ASSETS.fetch(new Request(new URL(path, url), request)).then((res) => {
     const h = secure(new Headers(res.headers)); h.set('cache-control', 'no-cache, no-transform'); return new Response(res.body, { status: res.status, headers: h });
   });
@@ -85,7 +95,7 @@ async function routeProduct(request, env, ctx, url) {
   if (p in PAGES) return page(PAGES[p]);
   if (m && !m[2] && request.method === 'GET') return env.FACTORY && !(await findAgent(env, m[1])) ? simple('Not found: Zero Lux', 'No unit with that number.', 404) : page('/agent');
   if (['/app.js', '/app.css', '/skill.md', '/factory.js', '/vendor/three.module.min.js'].includes(p)) return page(p);
-  if (['/create.html', '/floor.html', '/agent.html', '/connect.html', '/docs.html', '/roadmap.html', '/security.html', '/factory.html', '/lock.html'].includes(p)) return simple('Not found: Zero Lux', 'Nothing at this address.', 404);
+  if (['/create.html', '/floor.html', '/agent.html', '/connect.html', '/docs.html', '/roadmap.html', '/security.html', '/factory.html', '/lock.html', '/pay.html', '/dashboard.html', '/inbox.html', '/job.html'].includes(p)) return simple('Not found: Zero Lux', 'Nothing at this address.', 404);
   if (!env.FACTORY || !env.OPERATOR_KEY || !env.RPC_URL) return json({ error: 'The factory is not switched on yet.' }, 503);
   try {
     if (p === '/api/config') return config(env);
@@ -96,9 +106,33 @@ async function routeProduct(request, env, ctx, url) {
       if (request.method !== 'POST') return new Response(null, { status: 405, headers: { allow: 'POST' } });
       return p.endsWith('checkout') ? checkout(request, env) : p.endsWith('confirm') ? confirm(request, env) : webhook(request, env);
     }
+    // Standing orders: an agent run on a schedule or a price watch, paid from the customer's credit.
+    if (p === '/api/subs') return request.method === 'POST' ? createSub(request, env) : request.method === 'GET' ? listSubs(request, env) : new Response(null, { status: 405, headers: { allow: 'GET, POST' } });
+    const sb = p.match(/^\/api\/subs\/([0-9a-f]{32})$/);
+    if (sb) return request.method === 'POST' ? changeSub(request, env, sb[1]) : new Response(null, { status: 405, headers: { allow: 'POST' } });
+    // Where results are sent when nobody is on the site: a Discord or Slack webhook, Telegram.
+    if (p === '/api/deliver') return request.method === 'POST' ? setDeliver(request, env) : request.method === 'GET' ? getDeliver(request, env) : new Response(null, { status: 405, headers: { allow: 'GET, POST' } });
+    if (p === '/api/telegram/hook') return request.method === 'POST' ? telegramHook(request, env) : new Response(null, { status: 405, headers: { allow: 'POST' } });
+    // Files a customer attaches to a request: read in their browser, sent here as text or a small JPEG.
+    if (p === '/api/files') return request.method === 'POST' ? putFile(request, env) : new Response(null, { status: 405, headers: { allow: 'POST' } });
+    const fl = p.match(/^\/api\/files\/([0-9a-f]{32})$/);
+    if (fl) return request.method === 'GET' ? fileInfo(env, fl[1]) : new Response(null, { status: 405, headers: { allow: 'GET' } });
+    // Long jobs: one agent run in steps on one big piece of work, paid from the customer's credit.
+    if (p === '/api/jobs') return request.method === 'POST' ? createJob(request, env) : request.method === 'GET' ? listJobs(request, env) : new Response(null, { status: 405, headers: { allow: 'GET, POST' } });
+    const jb = p.match(/^\/api\/jobs\/([0-9a-f]{32})$/);
+    if (jb) return request.method === 'POST' ? changeJob(request, env, jb[1]) : request.method === 'GET' ? getJob(request, env, jb[1]) : new Response(null, { status: 405, headers: { allow: 'GET, POST' } });
     if (p.startsWith('/api/lock/')) return request.method === 'GET' ? open(await lockOf(request, env, p.slice(10))) : new Response(null, { status: 405, headers: { allow: 'GET' } });
+    // A buyer's review of a run: the token that proves the purchase came with the answer.
+    if (rvw) {
+      if (request.method === 'POST') return open(await postReview(request, env, rvw[1]));
+      return request.method === 'DELETE' ? await hideReview(request, env, rvw[1]) : json({ error: 'POST {"token", "stars", "text"} to review this run.' }, 405, { allow: 'POST', 'access-control-allow-origin': '*' });
+    }
     if (p.startsWith('/api/runs/')) { const r = await getRun(env, p.slice(10)); return r ? open(json(r, 200, { 'cache-control': 'public, max-age=30' })) : json({ error: 'No paid run with that id.' }, 404); }
+    if (p.startsWith('/api/owners/')) return request.method === 'GET' ? open(await ownerBoard(env, p.slice(12))) : new Response(null, { status: 405, headers: { allow: 'GET' } });
     if (p === '/api/line') return request.method === 'POST' ? line(request, env) : new Response(null, { status: 405 });
+    // Templates, starting from another agent, and changing a draft's wording before it is built.
+    if (p === '/api/templates') return request.method === 'GET' ? open(listTemplates(env)) : new Response(null, { status: 405, headers: { allow: 'GET' } });
+    if (p === '/api/drafts') return request.method === 'POST' ? makeDraft(request, env) : new Response(null, { status: 405, headers: { allow: 'POST' } });
     if (p === '/api/agents') return request.method === 'POST' ? createAgent(request, env) : open(await listAgents(env));
     const feat = p.match(/^\/api\/agents\/(\d{1,9})\/feature$/);
     if (feat) {
@@ -115,6 +149,26 @@ async function routeProduct(request, env, ctx, url) {
       return request.method === 'POST' ? await reviseAgent(request, env, a) : json({ error: 'POST the change, signed by the wallet that owns the agent.' }, 405, { allow: 'POST' });
     }
     // An agent's profile: its owner sets it with a signed message; the picture is read back from /photo.
+    // The free sample: its owner switches it on or off with a signed message.
+    const cp = p.match(/^\/api\/agents\/(\d{1,9})\/copying$/);
+    if (cp) {
+      if (request.method !== 'POST') return json({ error: 'POST the setting, signed by the wallet that owns the agent.' }, 405, { allow: 'POST' });
+      const a = await findAgent(env, cp[1]);
+      return a ? await setCopying(request, env, a) : json({ error: 'No agent with that number.' }, 404);
+    }
+    // Verified agents only: its owner switches it on or off with a signed message.
+    const vo = p.match(/^\/api\/agents\/(\d{1,9})\/verified$/);
+    if (vo) {
+      if (request.method !== 'POST') return json({ error: 'POST the setting, signed by the wallet that owns the agent.' }, 405, { allow: 'POST' });
+      const a = await findAgent(env, vo[1]);
+      return a ? await setVerifiedOnly(request, env, a) : json({ error: 'No agent with that number.' }, 404);
+    }
+    const smp = p.match(/^\/api\/agents\/(\d{1,9})\/sample$/);
+    if (smp) {
+      if (request.method !== 'POST') return json({ error: 'POST the setting, signed by the wallet that owns the agent.' }, 405, { allow: 'POST' });
+      const a = await findAgent(env, smp[1]);
+      return a ? await setSample(request, env, a) : json({ error: 'No agent with that number.' }, 404);
+    }
     const prof = p.match(/^\/api\/agents\/(\d{1,9})\/(profile|photo)$/);
     if (prof && prof[2] === 'photo') return request.method === 'GET' || request.method === 'HEAD' ? getPhoto(request, env, prof[1], url) : new Response(null, { status: 405, headers: { allow: 'GET' } });
     if (prof) {
@@ -133,8 +187,8 @@ async function routeProduct(request, env, ctx, url) {
       const a = await findAgent(env, m[1]);
       if (!a) return json({ error: 'not found' }, 404);
       const ran = await hire(request, env, ctx, a);
-      if (request.headers.get('x-credits')) await afterCard(env, request);
-      return open(ran);
+      if (request.headers.get('x-credits') || request.headers.get('x-sample')) await afterCard(env, request);
+      return open(await withReview(env, ran));
     }
   } catch (e) {
     console.error('product route failed', p, e?.name);
@@ -147,6 +201,11 @@ export default {
   async scheduled(event, env, ctx) {
     if (env.FACTORY) ctx.waitUntil(sweep(env));
     if (env.FACTORY) ctx.waitUntil(settleCard(env).catch(() => {}));
+    if (env.FACTORY) ctx.waitUntil(floatAlert(env).catch(() => {}));
+    if (env.FACTORY) ctx.waitUntil(subsTick(env, ctx).catch((e) => console.error('standing orders failed', e?.name)));
+    if (env.FACTORY) ctx.waitUntil(jobsTick(env).catch((e) => console.error('long jobs failed', e?.name)));
+    if (env.FACTORY) ctx.waitUntil(filesTick(env).catch(() => {}));
+    if (env.FACTORY) ctx.waitUntil(tapTick(env).catch(() => {}));
   },
 
   async fetch(request, env, ctx) {

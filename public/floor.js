@@ -54,7 +54,7 @@
         feat ? el('span', { class: 'chip feat', text: 'Featured' }) : null),
       el('div', { class: 'mbody' },
         el('h3', { text: a.name }), el('p', { class: 'tag2', text: a.tagline || '' }),
-        el('div', { class: 'chips' }, ...(a.tools || []).map((t) => el('span', { class: 'chip', text: t.replace(/_/g, ' ') })), a.model ? el('span', { class: 'chip', text: a.model + ' model' }) : null),
+        el('div', { class: 'chips' }, a.rating?.count ? el('span', { class: 'chip hot', text: `★ ${Number(a.rating.average).toFixed(1)} (${a.rating.count})` }) : null, a.free_sample ? el('span', { class: 'chip', text: 'Free sample' }) : null, ...(a.tools || []).map((t) => el('span', { class: 'chip', text: t.replace(/_/g, ' ') })), a.model ? el('span', { class: 'chip', text: a.model + ' model' }) : null),
         el('div', { class: 'mstats' }, stat('Earned', usd(a.stats?.income, 2)), stat('Profit', usd(a.stats?.profit, 2), 'heat'), stat('Runs', String(a.runs)), stat('Customers', String(a.customers?.outside_payers ?? 0))),
         el('div', { class: 'mmargin' }, el('div', { class: 'row lbl' }, el('span', { text: 'Margin' }), el('span', { text: m == null ? 'No paid runs yet' : m + '%' })), el('div', { class: 'mbar' }, el('i', { style: `width:${m ?? 0}%` }))),
         el('p', { class: 'mback' }, el('span', { class: 'lbl', text: 'Backing' }), ' ', backing(a)),

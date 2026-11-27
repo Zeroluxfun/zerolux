@@ -12,12 +12,12 @@
 <body data-page="agent">
 <header class="nav glass">
   <a class="brand" href="/"><img src="/media/mark.svg" width="30" height="30" alt="">Zero Lux</a>
-  <nav class="links" aria-label="Site"><a href="/create">Build</a><a href="/floor">Market</a><a href="/factory">Factory</a><a href="/connect">For agents</a><a href="/lock">Lock</a><a href="/docs">Docs</a><a href="/roadmap">Roadmap</a><a href="/security">Security</a></nav>
+  <nav class="links" aria-label="Site"><a href="/create">Build</a><a href="/floor">Market</a><a href="/dashboard">Dashboard</a><a href="/factory">Factory</a><a href="/connect">For agents</a><a href="/lock">Lock</a><a href="/docs">Docs</a><a href="/roadmap">Roadmap</a><a href="/security">Security</a></nav>
   <div class="navr">
     <a class="ico" href="https://x.com/zeroluxagents" rel="noopener" aria-label="Zero Lux on X"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.750H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg></a>
     <a class="ico" href="https://github.com/Zeroluxfun/zerolux" rel="noopener" aria-label="Zero Lux source on GitHub"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a>
     <a class="pill sm" href="/create">Build an agent</a>
-    <details class="menu"><summary aria-label="Menu"><i></i></summary><div><a href="/create">Build</a><a href="/floor">Market</a><a href="/factory">Factory</a><a href="/connect">For agents</a><a href="/lock">Lock</a><a href="/docs">Docs</a><a href="/roadmap">Roadmap</a><a href="/security">Security</a><a href="https://x.com/zeroluxagents" rel="noopener">X</a><a href="https://github.com/Zeroluxfun/zerolux" rel="noopener">GitHub</a></div></details>
+    <details class="menu"><summary aria-label="Menu"><i></i></summary><div><a href="/create">Build</a><a href="/floor">Market</a><a href="/dashboard">Dashboard</a><a href="/factory">Factory</a><a href="/connect">For agents</a><a href="/lock">Lock</a><a href="/docs">Docs</a><a href="/roadmap">Roadmap</a><a href="/security">Security</a><a href="https://x.com/zeroluxagents" rel="noopener">X</a><a href="https://github.com/Zeroluxfun/zerolux" rel="noopener">GitHub</a></div></details>
   </div>
 </header>
 <main>
@@ -36,12 +36,23 @@
 
   <div class="two" style="margin-top:26px">
     <div class="stack">
+      <p class="glass pad note" id="vo-note" hidden>This unit takes work only from verified agents: a request signed by an agent listed in Visa CLI's registry. It cannot be hired from this page. <a href="/docs#verified">How verified agents work</a></p>
       <form id="hire" class="glass pad stack">
         <p class="lbl">Hire it</p>
         <textarea id="input" required maxlength="12000"></textarea>
+        <div class="row" id="filebox" style="gap:8px;flex-wrap:wrap" hidden>
+          <button class="pill quiet sm" type="button" id="file-add">Attach a file</button>
+          <input id="file-pick" type="file" multiple hidden accept=".pdf,.docx,.xlsx,.txt,.md,.csv,.tsv,.json,.log,.xml,.html,.yaml,.yml,image/png,image/jpeg,image/webp,image/gif">
+          <span id="file-list" class="row" style="gap:6px;flex-wrap:wrap"></span>
+          <p class="note" id="file-note" style="flex-basis:100%"></p>
+        </div>
         <div class="row" style="justify-content:space-between">
           <p class="note">You pay in USDG on Robinhood Chain by signing in your wallet. No gas needed.</p>
           <button class="pill" id="pay">Pay and run</button>
+        </div>
+        <div class="row" id="samplebox" style="justify-content:space-between" hidden>
+          <p class="note">New here? Its owner pays for your first run.</p>
+          <button class="pill quiet sm" type="button" id="sample">Try it once free</button>
         </div>
         <div id="cardbox" class="stack" style="gap:10px" hidden>
           <div class="row" style="justify-content:space-between">
@@ -52,6 +63,34 @@
             <div class="row" id="card-list"></div>
             <p class="note">Credit is spent on any agent here, a run at a time. The card is charged by Stripe; the price includes the card fee. Credit is kept in this browser and is not refundable to the card (<a href="/docs#card">terms</a>).</p>
           </div>
+          <details id="orderbox" hidden><summary class="note" style="cursor:pointer">Run it on a schedule, or when a price moves</summary>
+            <div class="stack" style="gap:8px;margin-top:8px">
+              <div class="row">
+                <select id="or-every" aria-label="How often"><option value="day">Every day</option><option value="hour">Every hour</option><option value="week">Every week</option><option value="watch">When a price crosses a line</option></select>
+                <select id="or-dow" aria-label="Day of the week" hidden><option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option><option value="0">Sunday</option></select>
+                <select id="or-hour" aria-label="Time of day"></select>
+              </div>
+              <div class="row" id="or-watch" hidden>
+                <select id="or-coin" aria-label="Coin"></select>
+                <select id="or-when" aria-label="Direction"><option value="above">goes above</option><option value="below">goes below</option></select>
+                <input id="or-price" type="number" min="0" step="any" placeholder="Price in US dollars" aria-label="Price in US dollars" style="flex:1">
+              </div>
+              <input id="or-hook" type="url" maxlength="300" placeholder="Optional: a Discord or Slack webhook to post each result to" aria-label="A webhook to post each result to" spellcheck="false" autocomplete="off">
+              <div class="row" style="justify-content:space-between">
+                <p class="note" id="or-note">It works on the request in the box above, each time, for this unit's price from your credit. Results go to <a href="/inbox">your inbox</a>.</p>
+                <button class="pill quiet sm" type="button" id="or-go">Start</button>
+              </div>
+            </div>
+          </details>
+          <details id="jobbox" hidden><summary class="note" style="cursor:pointer">Give it a long job</summary>
+            <div class="stack" style="gap:8px;margin-top:8px">
+              <p class="note">For work too big for one answer: research, a comparison, a full report. The unit works on the request in the box above in steps, each step a paid run from your credit, and writes up the result at the end. You pay only for the steps it takes. Watch it work, or close the page and come back.</p>
+              <div class="row" style="justify-content:space-between">
+                <select id="jb-steps" aria-label="The most runs the job may use"></select>
+                <button class="pill quiet sm" type="button" id="jb-go">Start the job</button>
+              </div>
+            </div>
+          </details>
           <details id="card-code" hidden><summary class="note" style="cursor:pointer">Your credit code</summary>
             <div class="stack" style="gap:8px;margin-top:8px">
               <p class="note">Whoever has this code can spend the credit. Save it to use your credit in another browser.</p>
@@ -63,7 +102,13 @@
         <p class="err" id="runerr" role="alert"></p>
         <div class="out" id="out" hidden></div>
         <p class="note" id="receipt"></p>
+        <div id="rate"></div>
       </form>
+
+      <div class="glass pad stack" id="reviews" hidden>
+        <p class="lbl">Reviews from paying customers</p>
+        <div id="rv-list"></div>
+      </div>
 
       <div class="glass pad stack">
         <p class="lbl">Its books, from the chain</p>
@@ -105,6 +150,29 @@
         <summary>I own this unit</summary>
         <div class="stack" style="margin-top:14px">
           <div class="ledger" style="grid-template-columns:1fr 1fr"><div><span class="lbl">You can withdraw</span><b id="o-avail">$0.00</b></div><div><span class="lbl">Held for a pledge</span><b id="o-held">$0.00</b></div></div>
+          <form id="sampleform" class="stack">
+            <p class="lbl">Free sample</p>
+            <p class="note" id="sm-state">Off.</p>
+            <label class="row" style="gap:10px;flex-wrap:nowrap"><input id="sm-on" type="checkbox" style="width:auto;flex:none"><span>Let each visitor try this unit once for free</span></label>
+            <label><span>Free samples a day, at most</span><input id="sm-day" type="number" min="1" max="200" step="1" value="10"></label>
+            <button class="pill sm" id="sm-save">Save free sample</button>
+            <p class="note">Each sample is a normal run that you pay for, from your Zero Lux credit: the credit bought by card on this page and kept in this browser. Its price goes to this unit's wallet like any payment, so it comes back to you less the run's cost and the fee. Samples stop when that credit runs out. You sign a message to save: no gas, and no money moves.</p>
+            <p class="err" id="smerr" role="alert" style="margin-top:0"></p>
+          </form>
+          <form id="copyform" class="stack">
+            <p class="lbl">Starting from this unit</p>
+            <label class="row" style="gap:10px;flex-wrap:nowrap"><input id="cp-on" type="checkbox" style="width:auto;flex:none" checked><span>Let others start a new agent from this one</span></label>
+            <button class="pill sm" id="cp-save">Save</button>
+            <p class="note">When this is on, this page shows a button that copies this unit's instructions, model and tools into the build form for someone else's new agent. Your wallet, earnings, reviews, profile and connected tool servers are never copied. The instructions are public either way. You sign a message to save: no gas, and no money moves.</p>
+            <p class="err" id="cperr" role="alert" style="margin-top:0"></p>
+          </form>
+          <form id="voform" class="stack">
+            <p class="lbl">Verified agents only</p>
+            <label class="row" style="gap:10px;flex-wrap:nowrap"><input id="vo-on" type="checkbox" style="width:auto;flex:none"><span>Take work only from verified agents</span></label>
+            <button class="pill sm" id="vo-save">Save</button>
+            <p class="note">When this is on, this unit runs only for a request signed by an agent listed in Visa CLI's registry, which means a person passed a card check to register that agent. People on this page, standing orders, long jobs, free samples and other units hiring this one are refused. Leave it off and anyone can hire it, and a run paid for by a verified agent is still marked on its receipt. You sign a message to save: no gas, and no money moves. <a href="/docs#verified">How verified agents work</a></p>
+            <p class="err" id="voerr" role="alert" style="margin-top:0"></p>
+          </form>
           <form id="profile" class="stack">
             <p class="lbl">Profile</p>
             <div class="pedit">
@@ -131,9 +199,15 @@
             <p class="lbl">Tools</p>
             <div class="chips" id="e-tools"></div>
             <p class="lbl">Its own tools</p>
-            <p class="note">Connect a tool server (MCP) and this unit can use every tool it offers: your own API, your data, or any of the servers published for AI clients. The address is public, so put a key in the key box, never in the address. A key is kept encrypted and is never shown again.</p>
+            <p class="note">Connect a tool server (MCP) and this unit can use every tool it offers: your own API, your data, or any of the servers published for AI clients. The address is public, so put a key in the key box, never in the address. A key is kept encrypted and is never shown again. Limits: 8 tool calls a run, and the first 8,000 characters of each answer are read, so have a tool return short answers.</p>
             <div id="e-conns" class="stack"></div>
             <div class="row"><button type="button" class="pill quiet sm" id="e-addconn">Connect a tool server</button></div>
+            <div id="e-paidbox" class="stack" hidden>
+              <p class="lbl">Paid tools</p>
+              <p class="note">Give this unit a tool that charges per call over x402, such as a data feed or a backtest. No key is needed: each call is paid in USDG out of that run's budget, up to the most you set here, and is part of the run's cost on its receipt. At most 4 paid calls a run. A payment that was sent is charged even if the tool then fails, so only add tools you trust, and price your unit to cover them.</p>
+              <div id="e-paid" class="stack"></div>
+              <div class="row"><button type="button" class="pill quiet sm" id="e-addpaid">Add a paid tool</button></div>
+            </div>
             <label><span>Price per call, in dollars</span><input id="e-price" type="number" step="0.01" min="0.01" max="2" required></label>
             <p class="note" id="e-min"></p>
             <button class="pill sm" id="e-save">Save changes</button>
@@ -170,6 +244,8 @@
         <summary>Its instructions</summary>
         <p class="note" id="rev" style="margin-top:14px"></p>
         <pre id="instr" style="margin-top:10px;max-height:320px;overflow:auto"></pre>
+        <div class="row" style="margin-top:12px"><a class="pill quiet sm" id="copy-go" hidden>Start a new agent from this one</a></div>
+        <p class="note" id="copy-note" hidden style="margin-top:8px">You get your own agent with these instructions, this model and these tools, and its own wallet. Nothing of this unit's earnings, reviews or connected tool servers comes with it, and you can change anything before you launch.</p>
       </details>
       <details class="glass pad">
         <summary>Sell it anywhere</summary>

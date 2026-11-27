@@ -15,8 +15,8 @@ const usd = (units, dp) => {
   return '$' + n.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
 };
 const short = (a) => (a ? a.slice(0, 6) + '…' + a.slice(-4) : '');
-const api = async (path, body, headers = {}) => {
-  const res = await fetch(path, { method: body ? 'POST' : 'GET', headers: { 'content-type': 'application/json', ...headers }, body: body ? JSON.stringify(body) : undefined });
+const api = async (path, body, headers = {}, more = {}) => {
+  const res = await fetch(path, { method: body ? 'POST' : 'GET', headers: { 'content-type': 'application/json', ...headers }, body: body ? JSON.stringify(body) : undefined, ...more });
   let data = {}; try { data = await res.json(); } catch {}
   return { status: res.status, ok: res.ok, data };
 };
@@ -46,19 +46,22 @@ async function connect() {
 const sendTx = (from, to, data) => eth().request({ method: 'eth_sendTransaction', params: [{ from, to, data }] });
 const explain = (e) => (e?.code === 4001 ? 'You declined it in your wallet.' : e?.message || 'Something went wrong.');
 
-// An agent's answer as page content: plain text, with any picture the agent made (an address under /api/images/ on this
-// site, and nothing else) shown as the picture. The path is rebuilt from the id, so no other address can ever be loaded.
-function answer(text) {
-  const out = []; let at = 0;
-  for (const m of String(text ?? '').matchAll(/https:\/\/zerolux\.fun\/api\/images\/([0-9a-f]{32})/g)) {
-    if (m.index > at) out.push(text.slice(at, m.index));
-    const src = '/api/images/' + m[1];
-    out.push(el('a', { class: 'pic', href: src, target: '_blank', rel: 'noopener' }, el('img', { src, alt: 'Picture made by this agent', loading: 'lazy' })));
-    at = m.index + m[0].length;
-  }
-  if (at < String(text ?? '').length) out.push(String(text).slice(at));
-  return out;
-}
+// An agent's answer as page content, drawn by the code library's renderer (bold, lists, code, links, and any picture
+// the agent made). Nothing in an answer is ever parsed as HTML.
+const ZL = import('/zerolux.js');
+const answer = async (text) => (await ZL).answerNodes(text, { origin: location.origin });
+const rate = async (data) => (await ZL).rateNodes(data, { origin: location.origin });
+// A request names its files by a line each at its end. Shown to a person, those lines become a count.
+const MARKS = /\[attached file zl:[0-9a-f]{32}\]/g;
+const shownAsk = (s) => { const n = (String(s).match(MARKS) || []).length; return String(s).replace(MARKS, '').trim() + (n ? `\n(${n} attached ${n === 1 ? 'file' : 'files'})` : ''); };
+// Ways to keep an answer: as a Markdown file, or through the browser's print window, which can save a PDF.
+const keepRow = (text, box) => el('div', { class: 'row keep' },
+  el('a', { class: 'note', href: 'data:text/markdown;charset=utf-8,' + encodeURIComponent(String(text ?? '')), download: 'zerolux-answer.md', text: 'Download the answer' }),
+  el('button', { class: 'linkish note', type: 'button', text: 'Print or save as PDF', onclick: () => {
+    const done = () => { document.body.classList.remove('printing'); box.classList.remove('print-me'); removeEventListener('afterprint', done); };
+    document.body.classList.add('printing'); box.classList.add('print-me'); addEventListener('afterprint', done); print();
+  } }));
+const stars = (r) => (r && r.count ? `★ ${Number(r.average).toFixed(1)} (${r.count})` : '');
 
 // ---- the line ----
 async function pageCreate() {
@@ -82,8 +85,15 @@ async function pageCreate() {
     run(false); go.disabled = false;
     if (!r.ok) { stations.forEach((s) => (s.className = 'station')); err.textContent = r.data.error || 'The line jammed. Try again.'; return; }
     stations.forEach((s) => (s.className = 'station done'));
-    draft = r.data; const s = draft.spec;
-    $('#s-name').textContent = s.name; $('#s-tag').textContent = s.tagline; $('#s-instr').textContent = s.instructions;
+    show(r.data);
+  });
+  // A draft on the page: from the line, from a template, or from another agent. Everything on it can be changed before launch.
+  const show = (data) => {
+    draft = data; const s = draft.spec;
+    $('#s-name').value = s.name; $('#s-tag').textContent = s.tagline; $('#s-instr').value = s.instructions;
+    const F = draft.from, fr = $('#s-from'); fr.hidden = !F;
+    if (F?.template) fr.replaceChildren(`Started from the ${F.name} template. Change the name, the instructions, the model, the tools or the price before you launch.`);
+    else if (F?.agent != null) fr.replaceChildren('Started from ', el('a', { href: '/a/' + F.agent, text: F.name || 'agent ' + F.agent }), '. Yours gets its own wallet and its own record. Give it its own name, and change anything else you like.');
     $('#s-chips').replaceChildren(el('span', { class: 'chip', text: 'Wallet with spend limits' }));
     // The model: the line's suggestion is selected, and the builder can choose any other before launch. A stronger one costs more a run.
     model = s.model;
@@ -106,7 +116,27 @@ async function pageCreate() {
     }));
     $('#price').value = (s.price / 1e6).toFixed(2); fit();
     $('#result').hidden = false; $('#result').scrollIntoView({ behavior: 'smooth', block: 'start' });
-  });
+  };
+  // Starting from a template or from another agent: no model is asked, so the draft is there at once.
+  const terr = $('#terr');
+  const start = async (body, b) => {
+    err.textContent = ''; if (terr) terr.textContent = ''; if (b) b.disabled = true;
+    const r = await api('/api/drafts', body);
+    if (b) b.disabled = false;
+    if (!r.ok) { const say = r.data.error || 'That did not work. Try again.'; if (b && terr) terr.textContent = say; else err.textContent = say; return; }
+    show(r.data);
+  };
+  const BEST = { order: 'Best as a standing order', job: 'Best as a long job', files: 'Works on attached files', run: 'One run, one answer' };
+  if ($('#tpl')) api('/api/templates').then((r) => {
+    if (!r.ok || !r.data.templates?.length) return;
+    $('#tpl').replaceChildren(...r.data.templates.map((t) => el('article', { class: 'glass pad tcard' },
+      el('h3', { text: t.name }), el('p', { class: 'note', text: t.tagline }),
+      el('div', { class: 'chips' }, el('span', { class: 'chip hot', text: usd(t.price) + ' a call' }), el('span', { class: 'chip', text: t.model_name }), el('span', { class: 'chip', text: BEST[t.best] || BEST.run })),
+      el('button', { class: 'pill quiet sm', type: 'button', text: 'Use this template', 'data-template': t.key, onclick: (e) => start({ template: t.key }, e.currentTarget) }))));
+    $('#shelf').hidden = false;
+  }).catch(() => {});
+  const q = new URLSearchParams(location.search);
+  if (q.get('template') || q.get('from')) { const body = q.get('template') ? { template: q.get('template') } : { agent: q.get('from') }; history.replaceState(null, '', '/create'); start(body); }
   // The fee this agent will carry: the standard rate, or a lower one if the owner's wallet has enough $LUX locked for long enough.
   let feeFor = '';
   const fee = async () => {
@@ -122,7 +152,16 @@ async function pageCreate() {
     try { $('#owner').value = await connect(); $('#err2').textContent = ''; fee(); } catch (e) { $('#err2').textContent = explain(e); }
   });
   $('#launch').addEventListener('submit', async (e) => {
-    e.preventDefault(); const b = $('#put'), e2 = $('#err2'); e2.textContent = ''; b.disabled = true; b.textContent = 'Putting it on chain…';
+    e.preventDefault(); const b = $('#put'), e2 = $('#err2'); e2.textContent = ''; b.disabled = true;
+    // A changed name or changed instructions make a new draft first, and the new wording is checked on the way.
+    const nm = $('#s-name').value.trim(), ins = $('#s-instr').value.trim();
+    if (nm !== draft.spec.name || ins !== draft.spec.instructions) {
+      b.textContent = 'Checking your changes…';
+      const d = await api('/api/drafts', { draft: draft.draft, name: nm, instructions: ins });
+      if (!d.ok) { b.disabled = false; b.textContent = 'Put it on the line'; e2.textContent = d.data.error || 'Your changes could not be checked. Try again.'; return; }
+      draft = { ...draft, draft: d.data.draft, spec: d.data.spec };
+    }
+    b.textContent = 'Putting it on chain…';
     const r = await api('/api/agents', { draft: draft.draft, owner: $('#owner').value.trim(), price_usd: Number($('#price').value), tools: [...picked], model });
     if (!r.ok) { b.disabled = false; b.textContent = 'Put it on the line'; e2.textContent = r.data.error || 'That did not work. Try again.'; return; }
     location.href = '/a/' + r.data.id + '?new=1';
@@ -145,6 +184,7 @@ async function pageFloor() {
       const card = el('a', { class: 'unit glass', href: '/a/' + a.id },
         el('div', { class: 'row', style: 'justify-content:space-between' }, el('span', { class: 'rank', text: '#' + (i + 1) + ' · unit ' + a.id }), el('span', { class: 'chip' + (a.status === 'live' ? ' hot' : ''), text: a.status === 'live' ? usd(a.price) + ' a call' : 'Off the line' })),
         el('h3', { text: a.name }), el('p', { text: a.tagline || '' }),
+        a.rating?.count || a.free_sample ? el('div', { class: 'row', style: 'gap:6px' }, a.rating?.count ? el('span', { class: 'chip hot', text: stars(a.rating) }) : null, a.free_sample ? el('span', { class: 'chip', text: 'Free sample' }) : null) : null,
         el('div', { class: 'money' }, el('div', {}, el('span', { text: 'Earned' }), el('b', { text: usd(a.stats?.income) })), el('div', {}, el('span', { text: 'Profit' }), el('b', { class: 'heat', text: usd(a.stats?.profit) })), el('div', {}, el('span', { text: 'Runs' }), el('b', { text: String(a.runs) }))),
         a.stats?.lien ? el('span', { class: 'chip', text: (a.stats.lien.bps / 100) + '% of profit pledged' }) : null);
       card.style.setProperty('--heat', String(.22 + heat * .7)); card.style.setProperty('--glow', glow);
@@ -185,6 +225,29 @@ async function pageAgent() {
     }));
     $('#e-addconn').hidden = eConns.length >= MAX_CONNS;
   }
+  // Its paid tools (endpoints that charge per call over x402), as rows of the form. xDirty: a row was touched.
+  let ePaid = [], xDirty = false;
+  const MAX_PAID = 4;
+  function drawPaid() {
+    const box = $('#e-paid'); if (!box) return;
+    $('#e-paidbox').hidden = !(A.version >= 3);
+    box.replaceChildren(...ePaid.map((t, i) => {
+      // Anything that changes what the endpoint is asked drops the price and payee found when it was last saved, so it is asked again.
+      const field = (label, props, set) => { const inp = el('input', props); inp.addEventListener('input', () => { set(inp.value); t.price = null; t.pay_to = null; eDirty = xDirty = true; }); return el('label', {}, el('span', { text: label }), inp); };
+      const method = el('select', {}, ...['GET', 'POST'].map((m) => { const o = el('option', { value: m, text: m }); if (m === t.method) o.selected = true; return o; }));
+      method.addEventListener('change', () => { t.method = method.value; t.price = null; t.pay_to = null; eDirty = xDirty = true; });
+      return el('div', { class: 'stack', style: 'gap:8px;padding:12px;border:1px solid var(--line);border-radius:14px' },
+        field('Name', { type: 'text', maxlength: '30', placeholder: 'backtest', value: t.name, autocomplete: 'off', spellcheck: 'false' }, (v) => { t.name = v; }),
+        field('What it does', { type: 'text', maxlength: '300', placeholder: 'Backtests a trading strategy on a stock and returns the results.', value: t.description }, (v) => { t.description = v; }),
+        field('Address', { type: 'text', maxlength: '300', placeholder: 'https://…', value: t.url, autocomplete: 'off', spellcheck: 'false' }, (v) => { t.url = v; }),
+        el('label', {}, el('span', { text: 'Method' }), method),
+        field('An example call, as JSON (optional)', { type: 'text', maxlength: '600', placeholder: '{"symbol": "AAPL", "days": 90}', value: t.example, autocomplete: 'off', spellcheck: 'false' }, (v) => { t.example = v; }),
+        field('Most one call may cost, in dollars', { type: 'number', step: '0.001', min: '0.001', max: '1', placeholder: '0.03', value: t.max_usd }, (v) => { t.max_usd = v; }),
+        t.price ? el('p', { class: 'note', text: 'When saved it asked ' + usd(t.price) + ' a call, paid to ' + short(t.pay_to) + '.' }) : null,
+        el('div', { class: 'row' }, el('button', { type: 'button', class: 'pill quiet sm', text: 'Remove', onclick: () => { ePaid.splice(i, 1); eDirty = xDirty = true; drawPaid(); } })));
+    }));
+    $('#e-addpaid').hidden = ePaid.length >= MAX_PAID;
+  }
   const esay = (t, cls = 'err') => { const e = $('#eerr'); e.className = cls; e.textContent = t; };
   const eFit = () => { $('#e-min').textContent = 'The lowest price with this model and these tools is ' + usd(Math.max(cfg.models[eModel]?.minPrice || 0, ...[...eTools].map((t) => cfg.tool_floor?.[t] || 0))) + ' a call.'; };
   function drawRevise() {
@@ -192,6 +255,7 @@ async function pageAgent() {
     $('#e-name').value = A.name; $('#e-hint').value = A.input_hint || ''; $('#e-instr').value = A.instructions; $('#e-price').value = (Number(A.price) / 1e6).toFixed(2);
     eModel = A.model_key; eTools = new Set(A.tools);
     eConns = (A.connections || []).map((c) => ({ name: c.name, url: c.url, key: c.key, secret: '', tools: c.tools })); cDirty = false; drawConns();
+    ePaid = (A.paid_tools || []).map((t) => ({ name: t.name, description: t.description, url: t.url, method: t.method, example: t.example ? JSON.stringify(t.example) : '', max_usd: String(Number(t.max) / 1e6), price: t.price, pay_to: t.pay_to })); xDirty = false; drawPaid();
     $('#e-models').replaceChildren(...Object.entries(cfg.models).map(([k, m]) => {
       const b = el('button', { type: 'button', class: 'mpick' + (k === eModel ? ' on' : ''), role: 'radio', 'aria-checked': String(k === eModel) },
         el('b', { text: m.name || m.label }), el('span', { text: m.maker || '' }), el('i', { text: 'from ' + usd(m.minPrice) }));
@@ -225,13 +289,22 @@ async function pageAgent() {
     b.disabled = !held && (A.status !== 'live' || !L.open); $('#f-no').hidden = !armed || !!held;
     $('#f-closed').hidden = !!L.open; $('#f-paste').hidden = !L.open;
   };
-  const load = async () => {
-    const r = await api('/api/agents/' + id);
+  // `fresh` skips the browser's short-lived copy, for straight after the owner saved something.
+  const load = async (fresh) => {
+    const r = await api('/api/agents/' + id, null, {}, fresh === true ? { cache: 'reload' } : {});
     if (!r.ok) { $('main').replaceChildren(el('div', { class: 'empty glass', text: 'No unit with that number.' })); return false; }
     A = r.data.agent; const s = A.stats || {};
     document.title = A.name + ' · Zero Lux';
     $('#name').textContent = A.name; $('#tag').textContent = A.tagline || A.job;
     $('#chips').replaceChildren(el('span', { class: 'chip hot', text: usd(A.price) + ' a call in USDG' }), el('span', { class: 'chip', text: A.model + ' model' }), ...(A.fee_discount ? [el('span', { class: 'chip', text: 'Fee ' + A.fee_bps / 100 + '% · built with $LUX locked' })] : []), ...A.tools.map((t) => el('span', { class: 'chip', text: cfg.tools[t] })), ...(A.identity ? [el('span', { class: 'chip', text: 'ERC-8004 #' + A.identity })] : []), ...(A.connections || []).map((c) => el('span', { class: 'chip', text: 'Own tools: ' + c.name + ' · ' + c.tools.length })), ...(A.revision > 1 ? [el('span', { class: 'chip', text: 'Version ' + A.revision })] : []), ...(A.status !== 'live' ? [el('span', { class: 'chip', text: 'Off the line' })] : []));
+    if (A.rating?.count) $('#chips').prepend(el('span', { class: 'chip hot', text: stars(A.rating) + (A.rating.count === 1 ? ' review' : ' reviews') }));
+    if (A.free_sample) $('#chips').append(el('span', { class: 'chip', text: 'Free sample' }));
+    if (A.verified_only) $('#chips').append(el('span', { class: 'chip hot', text: 'Verified agents only' }));
+    if ($('#vo-note')) $('#vo-note').hidden = !A.verified_only;
+    if ($('#voform') && !$('#voform').dataset.touched) $('#vo-on').checked = !!A.verified_only;
+    const RV = r.data.reviews || [];
+    if ($('#reviews')) { $('#reviews').hidden = !RV.length; $('#rv-list').replaceChildren(...RV.map((x) => el('div', { class: 'rv' }, el('div', { class: 'row', style: 'gap:10px' }, el('b', { class: 'rv-s', text: '★'.repeat(x.stars) + '☆'.repeat(5 - x.stars) }), el('span', { class: 'note', text: x.created_at.slice(0, 10) }), el('a', { class: 'note', href: '/api/runs/' + x.run, target: '_blank', rel: 'noopener', text: 'Receipt' })), x.text ? el('p', { text: x.text }) : null))); }
+    if ($('#sm-state')) { const S = A.sample; $('#sm-state').textContent = S?.on ? `On: ${S.used_today} of ${S.per_day} used today.` + (S.funded ? '' : ' Paused: the credit that pays for samples does not cover a run. Add credit by card, then save again.') : 'Off.'; if (!$('#sampleform').dataset.touched) { $('#sm-on').checked = !!S?.on; if (S) $('#sm-day').value = S.per_day; } }
     $('#l-income').textContent = usd(s.income); $('#l-cost').textContent = usd(s.charged); $('#l-profit').textContent = usd(s.profit); $('#l-runs').textContent = A.runs;
     const who = A.customers; if (who) $('#l-who').textContent = who.payers ? `${who.outside_payers} outside ${who.outside_payers === 1 ? 'customer has' : 'customers have'} paid ${usd(who.from_outside)}${who.top_outside_share != null ? `, the largest of them ${who.top_outside_share}% of that` : ''}. ${usd(who.from_insiders)} came from the owner, a pledge holder or Zero Lux's own test wallet.` : 'No one has paid this agent yet.';
     // A version 3 wallet counts outside income itself, on chain, net of refunds: show the contract's own figures.
@@ -239,6 +312,8 @@ async function pageAgent() {
     $('#wallet').replaceChildren(addr(A.wallet)); $('#owner').replaceChildren(addr(A.owner));
     $('#input').placeholder = A.input_hint || 'What should it work on?'; $('#pay').textContent = 'Pay ' + usd(A.price) + ' and run'; $('#pay').disabled = A.status !== 'live';
     $('#instr').textContent = A.instructions;
+    if ($('#copy-go')) { $('#copy-go').hidden = $('#copy-note').hidden = !A.copyable; $('#copy-go').href = '/create?from=' + id; }
+    if ($('#copyform') && !$('#copyform').dataset.touched) $('#cp-on').checked = A.copy_allowed !== false;
     // Its owner can change what it does. Say which version this is, and link every version it has had.
     const rv = $('#rev'); if (rv) rv.replaceChildren(A.revision > 1 ? `Version ${A.revision}${A.revised_at ? ', saved ' + new Date(A.revised_at).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC' }) + ' UTC' : ''} by its owner. ` : 'Version 1: as it was built. Its owner can change it, and each change is a new version. ', el('a', { href: A.revisions, target: '_blank', rel: 'noopener', text: 'Every version' }));
     // Selling it elsewhere: the button as a visitor to another site would see it, the code to paste, and the same from JavaScript.
@@ -274,6 +349,10 @@ async function pageAgent() {
     let ct = $('#conn-terms'); if (!ct && $('#hire')) { ct = el('p', { class: 'note', id: 'conn-terms' }); $('#hire').append(ct); }
     const cs = A.connections || [];
     if (ct) { ct.hidden = !cs.length; ct.textContent = cs.length ? 'During a run this unit may send parts of your request to outside tool servers its owner connected: ' + cs.map((c) => `${c.name} (${c.host}: ${c.tools.map((t) => t.name).join(', ')})`).join('; ') + '. Zero Lux does not run them.' : ''; }
+    // And for paid tools: where parts of a request may go, and that the run pays them out of its own budget.
+    let pt = $('#paid-terms'); if (!pt && $('#hire')) { pt = el('p', { class: 'note', id: 'paid-terms' }); $('#hire').append(pt); }
+    const ps = A.version >= 3 ? A.paid_tools || [] : [];
+    if (pt) { pt.hidden = !ps.length; pt.textContent = ps.length ? 'During a run this unit may send parts of your request to paid tools its owner chose, and pay them out of the run\'s budget: ' + ps.map((t) => `${t.name} (${t.host}, up to ${usd(t.max)} a call)`).join('; ') + '. You pay the price shown and nothing more. Zero Lux does not run them.' : ''; }
     const l = $('#ch-list'); if (!l) return;
     l.replaceChildren(...(listed().length ? listed().map((x) => el('span', { style: 'display:block', text: `Unit ${x.agent_id} "${x.name}" · ${usd(x.price)} a call · wallet ${x.wallet}` })) : ['This unit cannot hire any other unit yet.']));
   };
@@ -327,14 +406,42 @@ async function pageAgent() {
     if (!r.ok && !r.data.final) throw new Error((r.data.error || 'Something went wrong.') + ' Your payment is kept: press the button again to pick the run up.');
     keep(null);
     if (!r.ok) throw new Error(r.data.error || 'The run failed.');
-    $('#out').hidden = false; $('#out').replaceChildren(...answer(r.data.output));
+    $('#out').hidden = false; $('#out').replaceChildren(...(await answer(r.data.output)), keepRow(r.data.output, $('#out')));
+    $('#rate').replaceChildren(...(await rate(r.data)));
     $('#receipt').replaceChildren('Paid ' + usd(r.data.paid) + ' · ', tx(r.data.tx)); say('');
     setTimeout(load, 9000);
   }
   const waiting = kept();
-  if (waiting && Date.now() - waiting.at < 40 * 60_000) { $('#input').value = waiting.input; $('#pay').textContent = 'Pick up your paid run'; say('You have a paid run waiting from a moment ago.', 'ok'); } else keep(null);
+  if (waiting && Date.now() - waiting.at < 40 * 60_000) { $('#input').value = waiting.input.replace(MARKS, '').trim(); $('#pay').textContent = 'Pick up your paid run'; say('You have a paid run waiting from a moment ago.', 'ok'); } else keep(null);
+  // ---- files: read in this browser, sent as text or a small picture, and named in the request by a line each ----
+  const files = [];
+  const withFiles = (text) => (text ? text.slice(0, 11_800) + files.map((f) => '\n[attached file zl:' + f.id + ']').join('') : text);
+  const FL = (await config()).files;
+  if ($('#filebox') && FL) {
+    const room = Number(A.file_chars || 0), num = (n) => n.toLocaleString('en-US');
+    $('#filebox').hidden = false;
+    const drawFiles = () => {
+      $('#file-list').replaceChildren(...files.map((f) => el('span', { class: 'chip' }, f.name + (f.note ? ' · ' + f.note : '') + (f.kind === 'text' ? ' · ' + num(f.chars) + ' characters' : ''), el('button', { class: 'chipx', type: 'button', 'aria-label': 'Remove ' + f.name, text: '×', onclick: () => { files.splice(files.indexOf(f), 1); drawFiles(); } }))));
+      const used = files.reduce((n, f) => n + (f.kind === 'image' ? FL.picture_counts_as : f.chars), 0);
+      $('#file-note').textContent = !files.length ? `Up to ${FL.max} files: PDF, Word, Excel, text, CSV or pictures. A file is read in your browser; only its text, or a scaled-down picture, is sent, and it is deleted after ${FL.keep_days} days.`
+        : used > room ? `These come to about ${num(used)} characters. One run of this unit reads about the first ${num(room)}, so the end will be left out.`
+          : `One run of this unit reads up to about ${num(room)} characters of files. These fit.`;
+      $('#file-add').disabled = files.length >= FL.max;
+    };
+    $('#file-add').addEventListener('click', () => $('#file-pick').click());
+    $('#file-pick').addEventListener('change', async () => {
+      const picked = [...$('#file-pick').files]; $('#file-pick').value = '';
+      for (const file of picked) {
+        if (files.length >= FL.max) { say(`A request carries at most ${FL.max} files.`); break; }
+        $('#file-add').disabled = true; $('#file-note').textContent = 'Reading ' + file.name + '…';
+        try { const f = await (await import('/attach.js')).attach(file); files.push(f); say(f.cut ? 'Only the first part of ' + f.name + ' was kept: it is very long.' : '', 'ok'); } catch (x) { say((x && x.message) || 'That file could not be read.'); }
+      }
+      drawFiles();
+    });
+    drawFiles();
+  }
   $('#hire').addEventListener('submit', async (e) => {
-    e.preventDefault(); const b = $('#pay'), input = $('#input').value.trim(); if (!input) return;
+    e.preventDefault(); const b = $('#pay'), input = withFiles($('#input').value.trim()); if (!input) return;
     b.disabled = true; say('');
     try {
       const held = kept();
@@ -354,6 +461,104 @@ async function pageAgent() {
     } catch (e2) { say(explain(e2)); }
     b.disabled = false; b.textContent = 'Pay ' + usd(A.price) + ' and run';
   });
+
+  // ---- one free run, where the owner offers it: the owner's credit pays, the visitor needs nothing ----
+  if ($('#samplebox') && A.free_sample) {
+    const KEEPS = 'zl-sample-' + id, sb = $('#sample');
+    $('#samplebox').hidden = false;
+    sb.addEventListener('click', async () => {
+      const input = withFiles($('#input').value.trim()); if (!input) { $('#input').focus(); say('Write what the unit should work on first.'); return; }
+      sb.disabled = true; say(''); sb.replaceChildren(el('span', { class: 'spin' }), ' Working…');
+      let w = null; try { w = JSON.parse(sessionStorage.getItem(KEEPS) || 'null'); } catch {}
+      if (!w) { w = { ticket: [...crypto.getRandomValues(new Uint8Array(16))].map((x) => x.toString(16).padStart(2, '0')).join(''), input }; try { sessionStorage.setItem(KEEPS, JSON.stringify(w)); } catch {} }
+      try {
+        const r = await (await ZL).sample(id, w.input, { origin: location.origin, ticket: w.ticket });
+        try { sessionStorage.removeItem(KEEPS); } catch {}
+        $('#out').hidden = false; $('#out').replaceChildren(...(await answer(r.output)), keepRow(r.output, $('#out'))); $('#rate').replaceChildren();
+        $('#receipt').replaceChildren('Free sample, paid for by this unit\'s owner · ', tx(r.tx)); say('');
+        $('#samplebox').hidden = true; setTimeout(load, 9000);
+      } catch (x) {
+        if (x?.final !== false) { try { sessionStorage.removeItem(KEEPS); } catch {} }
+        say(explain(x)); if (x?.sample) $('#samplebox').hidden = true;
+      }
+      sb.disabled = false; sb.textContent = 'Try it once free';
+    });
+  }
+
+  // ---- the owner takes work only from verified agents, or from anyone, with a signed message ----
+  if ($('#voform')) {
+    const vsay = (t, cls = 'err') => { const e = $('#voerr'); e.className = cls; e.textContent = t; };
+    $('#voform').addEventListener('input', () => { $('#voform').dataset.touched = '1'; });
+    $('#voform').addEventListener('submit', async (e) => {
+      e.preventDefault(); const b = $('#vo-save'); b.disabled = true; vsay('');
+      try {
+        const from = await connect();
+        if (from.toLowerCase() !== A.owner.toLowerCase()) throw new Error('Connect the wallet that owns this unit (' + short(A.owner) + ').');
+        const path = '/api/agents/' + id + '/verified', want = { required: $('#vo-on').checked };
+        const first = await api(path, { prepare: true, ...want });
+        if (!first.ok) throw new Error(first.data.error || 'That did not go through. Try again.');
+        const asHex = '0x' + [...new TextEncoder().encode(first.data.message)].map((v) => v.toString(16).padStart(2, '0')).join('');
+        b.replaceChildren(el('span', { class: 'spin' }), ' Sign in your wallet…');
+        const signature = await eth().request({ method: 'personal_sign', params: [asHex, from] });
+        const r = await api(path, { ...want, time: first.data.time, signature });
+        if (!r.ok) throw new Error(r.data.error || 'That did not go through. Try again.');
+        delete $('#voform').dataset.touched; await load(true);
+        vsay(r.data.required ? 'Saved. This unit now takes work only from verified agents.' : 'Saved. Anyone can hire this unit.', 'ok');
+      } catch (x) { vsay(explain(x)); }
+      b.disabled = false; b.textContent = 'Save';
+    });
+  }
+
+  // ---- the owner lets, or stops, others starting a new agent from this one, with a signed message ----
+  if ($('#copyform')) {
+    const csay = (t, cls = 'err') => { const e = $('#cperr'); e.className = cls; e.textContent = t; };
+    $('#copyform').addEventListener('input', () => { $('#copyform').dataset.touched = '1'; });
+    $('#copyform').addEventListener('submit', async (e) => {
+      e.preventDefault(); const b = $('#cp-save'); b.disabled = true; csay('');
+      try {
+        const from = await connect();
+        if (from.toLowerCase() !== A.owner.toLowerCase()) throw new Error('Connect the wallet that owns this unit (' + short(A.owner) + ').');
+        const path = '/api/agents/' + id + '/copying', want = { allow: $('#cp-on').checked };
+        const first = await api(path, { prepare: true, ...want });
+        if (!first.ok) throw new Error(first.data.error || 'That did not go through. Try again.');
+        const asHex = '0x' + [...new TextEncoder().encode(first.data.message)].map((v) => v.toString(16).padStart(2, '0')).join('');
+        b.replaceChildren(el('span', { class: 'spin' }), ' Sign in your wallet…');
+        const signature = await eth().request({ method: 'personal_sign', params: [asHex, from] });
+        const r = await api(path, { ...want, time: first.data.time, signature });
+        if (!r.ok) throw new Error(r.data.error || 'That did not go through. Try again.');
+        delete $('#copyform').dataset.touched; await load(true);
+        csay(r.data.allow ? 'Saved. Others can start a new agent from this one.' : 'Saved. The button is gone and new agents cannot be started from this one.', 'ok');
+      } catch (x) { csay(explain(x)); }
+      b.disabled = false; b.textContent = 'Save';
+    });
+  }
+
+  // ---- the owner switches the free sample on or off, with a signed message ----
+  if ($('#sampleform')) {
+    const ssay = (t, cls = 'err') => { const e = $('#smerr'); e.className = cls; e.textContent = t; };
+    $('#sampleform').addEventListener('input', () => { $('#sampleform').dataset.touched = '1'; });
+    $('#sampleform').addEventListener('submit', async (e) => {
+      e.preventDefault(); const b = $('#sm-save'); b.disabled = true; ssay('');
+      try {
+        const from = await connect();
+        if (from.toLowerCase() !== A.owner.toLowerCase()) throw new Error('Connect the wallet that owns this unit (' + short(A.owner) + ').');
+        const want = { on: $('#sm-on').checked, per_day: Number($('#sm-day').value) };
+        let code = null; try { code = localStorage.getItem('zl-credit'); } catch {}
+        if (want.on && !/^[0-9a-f]{64}$/.test(code || '')) throw new Error('Samples are paid from your Zero Lux credit. Buy credit by card first (Pay by card, above), then save again.');
+        const path = '/api/agents/' + id + '/sample', head = want.on ? { 'x-credits': code } : {};
+        const first = await api(path, { prepare: true, ...want }, head);
+        if (!first.ok) throw new Error(first.data.error || 'That did not go through. Try again.');
+        const asHex = '0x' + [...new TextEncoder().encode(first.data.message)].map((v) => v.toString(16).padStart(2, '0')).join('');
+        b.replaceChildren(el('span', { class: 'spin' }), ' Sign in your wallet…');
+        const signature = await eth().request({ method: 'personal_sign', params: [asHex, from] });
+        const r = await api(path, { ...want, time: first.data.time, signature }, head);
+        if (!r.ok) throw new Error(r.data.error || 'That did not go through. Try again.');
+        delete $('#sampleform').dataset.touched; await load(true);
+        ssay(r.data.on ? 'Saved. Visitors can now try this unit once for free.' : 'Saved. The free sample is off.', 'ok');
+      } catch (x) { ssay(explain(x)); }
+      b.disabled = false; b.textContent = 'Save free sample';
+    });
+  }
 
   // ---- pay by card: credit bought through Stripe's checkout and kept under a code this browser holds ----
   if ($('#cardbox')) (async () => {
@@ -398,12 +603,13 @@ async function pageAgent() {
       if (r.data.again) throw new Error('This is taking longer than it should. Press the button again to pick the run up. If it never runs, the credit comes back.');
       ss.set(KEEPC, null);
       if (!r.ok) throw new Error(r.data.error || 'The run failed.');
-      $('#out').hidden = false; $('#out').replaceChildren(...answer(r.data.output));
+      $('#out').hidden = false; $('#out').replaceChildren(...(await answer(r.data.output)), keepRow(r.data.output, $('#out')));
+      $('#rate').replaceChildren(...(await rate(r.data)));
       $('#receipt').replaceChildren('Paid ' + usd(r.data.paid) + ' from credit · ', tx(r.data.tx)); say('');
       setTimeout(load, 9000);
     }
     go.addEventListener('click', async () => {
-      const waiting = ss.get(KEEPC), input = $('#input').value.trim();
+      const waiting = ss.get(KEEPC), input = withFiles($('#input').value.trim());
       if (!waiting && !(bal >= Number(A.price))) { $('#card-packs').hidden = !$('#card-packs').hidden; return; }
       if (!waiting && !input) { $('#input').focus(); say('Write what the unit should work on first.'); return; }
       go.disabled = true; say(''); go.replaceChildren(el('span', { class: 'spin' }), ' Working…');
@@ -419,6 +625,45 @@ async function pageAgent() {
       if (r.ok && r.data.url) { location.href = r.data.url; return; }
       b.disabled = false; say(r.data.error || 'The card checkout could not be opened.');
     });
+    // ---- a standing order: this unit, run on a schedule or a price watch, paid from the same credit ----
+    if ($('#orderbox') && cfg.orders) {
+      $('#orderbox').hidden = false;
+      $('#or-hour').replaceChildren(...Array.from({ length: 24 }, (_, h) => el('option', { value: String(h), text: 'at ' + new Date(2020, 0, 1, h).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }), ...(h === 9 ? { selected: '' } : {}) })));
+      $('#or-coin').replaceChildren(...cfg.orders.coins.map((c) => el('option', { value: c, text: c.toUpperCase() })));
+      const shape = () => { const v = $('#or-every').value; $('#or-dow').hidden = v !== 'week'; $('#or-hour').hidden = v === 'hour' || v === 'watch'; $('#or-watch').hidden = v !== 'watch'; $('#or-go').textContent = v === 'watch' ? 'Start watching' : 'Start'; };
+      $('#or-every').addEventListener('change', shape); shape();
+      $('#or-go').addEventListener('click', async () => {
+        const input = withFiles($('#input').value.trim()), every = $('#or-every').value, b = $('#or-go');
+        if (!input) { $('#input').focus(); say('Write what the unit should work on each time.'); return; }
+        if (!code() || !(bal >= Number(A.price))) { $('#card-packs').hidden = false; say('A standing order is paid from credit. Buy credit by card first, then press Start again.'); return; }
+        // The time is chosen in the visitor's own clock and sent as the matching hour (and weekday) in UTC.
+        const t = new Date(); t.setHours(Number($('#or-hour').value), 0, 0, 0);
+        if (every === 'week') { const want = Number($('#or-dow').value); for (let i = 0; i < 7 && t.getDay() !== want; i++) t.setDate(t.getDate() + 1); }
+        const want = { agent: A.id, input, every, hour: t.getUTCHours(), dow: t.getUTCDay(), ...(every === 'watch' ? { watch: { coin: $('#or-coin').value, when: $('#or-when').value, price: Number($('#or-price').value) } } : {}), ...($('#or-hook').value.trim() ? { webhook: $('#or-hook').value.trim() } : {}) };
+        b.disabled = true; say('');
+        const r = await api('/api/subs', want, { 'x-credits': code() });
+        b.disabled = false;
+        if (!r.ok) { say(r.data.error || 'That did not go through. Try again.'); return; }
+        say(every === 'watch' ? 'Watching. When the price crosses your line, this unit runs and the result goes to your inbox.' : 'Started. The first run is on its way; results go to your inbox.', 'ok');
+        $('#or-note').replaceChildren(el('a', { href: '/inbox', text: 'Open your inbox' }));
+      });
+    }
+    // ---- a long job: this unit run in steps on one big piece of work, paid from the same credit ----
+    if ($('#jobbox') && cfg.jobs) {
+      $('#jobbox').hidden = false;
+      $('#jb-steps').replaceChildren(...cfg.jobs.steps.map((n, i) => el('option', { value: String(n), text: `Up to ${n} runs, at most ${usd(n * Number(A.price))}`, ...(i === 1 ? { selected: '' } : {}) })));
+      $('#jb-go').addEventListener('click', async () => {
+        const base = $('#input').value.trim(), goal = withFiles(base), b = $('#jb-go');
+        if (!goal) { $('#input').focus(); say('Write what the job is in the box above.'); return; }
+        if (base.length > 2000) { say('The brief for a long job is at most 2,000 characters. Shorten it and press again.'); return; }
+        if (!code() || !(bal >= Number(A.price))) { $('#card-packs').hidden = false; say('A long job is paid from credit. Buy credit by card first, then press Start the job again.'); return; }
+        b.disabled = true; say('');
+        const r = await api('/api/jobs', { agent: A.id, goal, max_steps: Number($('#jb-steps').value) }, { 'x-credits': code() });
+        b.disabled = false;
+        if (!r.ok) { say(r.data.error || 'That did not go through. Try again.'); return; }
+        location.href = '/job?id=' + r.data.job.id;
+      });
+    }
     $('#card-copy').addEventListener('click', async () => { try { await navigator.clipboard.writeText(code()); $('#card-copy').textContent = 'Copied'; } catch { $('#card-key').select(); } });
     $('#card-use').addEventListener('click', async () => {
       const v = $('#card-other').value.trim().toLowerCase();
@@ -594,6 +839,7 @@ async function pageAgent() {
   if ($('#revise')) {
     for (const i of ['#e-name', '#e-hint', '#e-instr', '#e-price']) $(i).addEventListener('input', () => { eDirty = true; });
     $('#e-addconn').addEventListener('click', () => { if (eConns.length < MAX_CONNS) { eConns.push({ name: '', url: '', key: null, secret: '', tools: [] }); eDirty = cDirty = true; drawConns(); } });
+    $('#e-addpaid').addEventListener('click', () => { if (ePaid.length < MAX_PAID) { ePaid.push({ name: '', description: '', url: '', method: 'GET', example: '', max_usd: '', price: null, pay_to: null }); eDirty = xDirty = true; drawPaid(); } });
     $('#revise').addEventListener('submit', async (e) => {
       e.preventDefault(); const b = $('#e-save'); if (b.disabled) return; b.disabled = true; esay('');
       try {
@@ -604,6 +850,8 @@ async function pageAgent() {
         // each server for its tools; the second sends back the list that came from it, so what is signed is what is saved.
         const rows = eConns.map((c) => ({ ...c }));
         if (cDirty) want.connections = rows.map((c) => ({ name: c.name, url: c.url.trim(), ...(c.secret ? { secret: c.secret } : c.key ? { key: c.key } : {}) }));
+        // Paid tools, likewise: the first step asks each endpoint what it charges; the second sends back what came of it.
+        if (xDirty) want.paid = ePaid.map((t) => ({ name: t.name.trim(), description: t.description, url: t.url.trim(), method: t.method, max_usd: Number(t.max_usd), ...(t.example.trim() ? { example: t.example.trim() } : {}), ...(t.price && t.pay_to ? { price: Number(t.price), pay_to: t.pay_to } : {}) }));
         const path = '/api/agents/' + id + '/spec';
         b.replaceChildren(el('span', { class: 'spin' }), ' Checking…');
         const first = await api(path, { prepare: true, ...want });
@@ -615,9 +863,9 @@ async function pageAgent() {
         b.replaceChildren(el('span', { class: 'spin' }), ' Sign in your wallet…');
         const signature = await eth().request({ method: 'personal_sign', params: [asHex, from] });
         b.replaceChildren(el('span', { class: 'spin' }), ' Saving…');
-        const r = await api(path, { ...want, ...(cDirty ? { connections: (P.spec.connections || []).map((c, i) => ({ ...c, ...(rows[i]?.secret ? { secret: rows[i].secret } : {}) })) } : {}), revision: P.revision, time: P.time, signature });
+        const r = await api(path, { ...want, ...(cDirty ? { connections: (P.spec.connections || []).map((c, i) => ({ ...c, ...(rows[i]?.secret ? { secret: rows[i].secret } : {}) })) } : {}), ...(xDirty ? { paid: P.spec.paid || [] } : {}), revision: P.revision, time: P.time, signature });
         if (!r.ok) throw new Error(r.data.error || 'That did not go through. Try again.');
-        eDirty = cDirty = false; await load();
+        eDirty = cDirty = xDirty = false; await load(true);
         esay('Saved as version ' + r.data.revision + '. New runs use it from now.' + (r.data.note ? ' ' + r.data.note : ''), 'ok');
       } catch (x) { esay(explain(x)); }
       b.disabled = false; b.textContent = 'Save changes';
@@ -743,4 +991,167 @@ async function pageLock() {
   $('#l-withdraw').addEventListener('click', () => act('Withdrawn. Your $LUX is back in your wallet.', async () => { await mined(await sendTx(me, S.locker, '0x3ccfd60b')); })); // withdraw()
 }
 
-({ create: pageCreate, floor: pageFloor, agent: pageAgent, lock: pageLock })[document.body.dataset.page]?.().catch(() => {});
+// ---- the owner's dashboard: every agent one wallet owns, what they sold, to whom, and a withdraw button each ----
+// Reading needs no wallet (the figures are public); a withdrawal is one call to the agent's wallet contract from its owner.
+// ---- the inbox: standing orders and what they delivered, for whoever holds this browser's credit code ----
+async function pageInbox() {
+  let code = null; try { const v = localStorage.getItem('zl-credit'); code = /^[0-9a-f]{64}$/.test(v || '') ? v : null; } catch {}
+  if (!code) { $('#i-say').textContent = 'This browser holds no Zero Lux credit, so it has no standing orders. Credit is bought by card on any agent\'s page.'; return; }
+  const head = { 'x-credits': code }, DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const clock = (iso) => new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  const when = (s) => {
+    if (s.every === 'hour') return 'Every hour';
+    if (s.every === 'watch') return `When ${s.watch.coin.toUpperCase()} goes ${s.watch.when} $${s.watch.price.toLocaleString('en-US')}`;
+    const t = new Date(); t.setUTCHours(s.hour, 0, 0, 0); for (let i = 0; s.every === 'week' && i < 7 && t.getUTCDay() !== s.dow; i++) t.setUTCDate(t.getUTCDate() + 1);
+    return (s.every === 'week' ? 'Every ' + DAYS[t.getDay()] : 'Every day') + ' at ' + t.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  };
+  const act = async (id, action) => { $('#i-err').textContent = ''; const r = await api('/api/subs/' + id, { action }, head); if (!r.ok) $('#i-err').textContent = r.data.error || 'That did not go through.'; await load(); };
+  async function load() {
+    const [r, c] = await Promise.all([api('/api/subs', null, head), api('/api/credits', null, head)]);
+    if (!r.ok) { $('#i-say').textContent = r.data.error || 'Your inbox is not answering. Try again in a moment.'; return; }
+    $('#i-say').textContent = `You have ${usd(c.data.balance || 0, 2)} of credit` + (c.data.on_hold ? ', on hold.' : '.') + (r.data.subs.length ? '' : ' No standing orders yet.');
+    $('#i-orders-box').hidden = !r.data.subs.length; $('#i-results-box').hidden = !r.data.results.length;
+    $('#i-orders').replaceChildren(...r.data.subs.map((s) => el('div', { class: 'ord' },
+      el('div', { class: 'row', style: 'gap:10px;justify-content:space-between' },
+        el('div', { class: 'row', style: 'gap:10px' }, el('a', { href: '/a/' + s.agent_id }, el('b', { text: s.agent || 'Unit ' + s.agent_id })), el('span', { class: 'chip' + (s.status === 'on' ? ' hot' : ''), text: s.status === 'on' ? 'On' : 'Stopped' }), el('span', { class: 'note', text: when(s) + ' · ' + usd(s.price) + ' a run' })),
+        el('div', { class: 'row', style: 'gap:8px' }, el('button', { class: 'pill quiet sm', type: 'button', text: s.status === 'on' ? 'Pause' : 'Switch on', onclick: () => act(s.id, s.status === 'on' ? 'pause' : 'resume') }), el('button', { class: 'pill quiet sm', type: 'button', text: 'Cancel', onclick: () => act(s.id, 'cancel') }))),
+      el('p', { class: 'note', text: shownAsk(s.input).length > 220 ? shownAsk(s.input).slice(0, 220) + '…' : shownAsk(s.input) }),
+      el('p', { class: 'note', text: s.note || (s.status !== 'on' ? 'Paused.' : s.next_at ? 'Next run ' + clock(s.next_at) + '. ' + s.runs + (s.runs === 1 ? ' run so far.' : ' runs so far.') : s.runs + (s.runs === 1 ? ' run so far.' : ' runs so far.')) }))));
+    const jb = await api('/api/jobs', null, head);
+    if ($('#i-jobs-box') && jb.ok) {
+      $('#i-jobs-box').hidden = !jb.data.jobs.length;
+      $('#i-jobs').replaceChildren(...jb.data.jobs.map((j) => el('div', { class: 'ord' },
+        el('div', { class: 'row', style: 'gap:10px;justify-content:space-between' },
+          el('div', { class: 'row', style: 'gap:10px' }, el('a', { href: '/a/' + j.agent_id }, el('b', { text: j.agent || 'Unit ' + j.agent_id })), el('span', { class: 'chip' + (j.status === 'working' || j.status === 'done' ? ' hot' : ''), text: { working: 'Working', done: 'Done', failed: 'Did not finish', stopped: 'Stopped' }[j.status] || j.status }), el('span', { class: 'note', text: clock(j.created_at) + ' · ' + j.runs + (j.runs === 1 ? ' run' : ' runs') + ' · ' + usd(j.paid) })),
+          el('a', { class: 'pill quiet sm', href: '/job?id=' + j.id, text: j.status === 'working' ? 'Watch it work' : 'Open' })),
+        el('p', { class: 'note', text: shownAsk(j.goal).length > 220 ? shownAsk(j.goal).slice(0, 220) + '…' : shownAsk(j.goal) }),
+        j.note ? el('p', { class: 'note', text: j.note }) : null)));
+    }
+    $('#i-results').replaceChildren(...(await Promise.all(r.data.results.map(async (d) => el('div', { class: 'ord' },
+      el('div', { class: 'row', style: 'gap:10px' }, el('a', { href: '/a/' + d.agent_id }, el('b', { text: d.agent })), el('span', { class: 'note', text: clock(d.at) }), d.status === 'done' ? el('span', { class: 'note', text: 'Paid ' + usd(d.paid) }) : el('span', { class: 'chip', text: 'Did not run' }), d.run && d.status === 'done' ? el('a', { class: 'note', href: '/api/runs/' + d.run, target: '_blank', rel: 'noopener', text: 'Receipt' }) : null),
+      d.note ? el('p', { class: 'note', text: d.note }) : null,
+      d.status === 'done' ? el('div', { class: 'out' }, ...(await answer(d.output || ''))) : el('p', { class: 'note', text: d.error || 'This run did not deliver.' }),
+      d.status === 'done' ? el('div', {}, ...(await rate({ run: d.run, review: d.review }))) : null)))));
+  }
+  // Where results are sent as they arrive: a Discord or Slack webhook, Telegram.
+  let poll = null;
+  const drawDv = (d) => {
+    $('#i-deliver-box').hidden = false; $('#dv-drop').hidden = !d.webhook; $('#dv-test').hidden = !(d.webhook || d.telegram?.linked);
+    $('#dv-hook-say').textContent = d.webhook ? `Results are posted to ${d.webhook.host}. Saving a new address replaces it.` : 'In Discord: channel settings, Integrations, Webhooks. In Slack: add an incoming webhook to a channel.';
+    $('#dv-tg').hidden = !d.telegram;
+    if (d.telegram?.linked) { clearInterval(poll); poll = null; $('#dv-tg-go').textContent = 'Disconnect Telegram'; $('#dv-tg-say').replaceChildren('Telegram is connected.'); }
+    else if (d.telegram) { $('#dv-tg-go').textContent = 'Connect Telegram'; if (!poll) $('#dv-tg-say').replaceChildren('Get each result as a Telegram message.'); }
+  };
+  const dv = async (body) => { $('#dv-err').textContent = ''; $('#dv-say').textContent = ''; const r = await api('/api/deliver', body, head); if (!r.ok) { $('#dv-err').textContent = r.data.error || 'That did not go through.'; return null; } drawDv(r.data); return r.data; };
+  $('#dv-save').addEventListener('click', async () => { const v = $('#dv-hook').value.trim(); if (!v) { $('#dv-err').textContent = 'Paste the webhook address first.'; return; } if (await dv({ webhook: v })) $('#dv-hook').value = ''; });
+  $('#dv-drop').addEventListener('click', () => dv({ webhook: '' }));
+  $('#dv-test').addEventListener('click', async () => { const d = await dv({ test: true }); if (d) $('#dv-say').textContent = d.sent.webhook || d.sent.telegram ? 'Sent. Check ' + [d.sent.webhook ? 'your channel' : null, d.sent.telegram ? 'Telegram' : null].filter(Boolean).join(' and ') + '.' : 'It did not get through. Check the address and try again.'; });
+  $('#dv-tg-go').addEventListener('click', async () => {
+    if ($('#dv-tg-go').textContent.startsWith('Disconnect')) { await dv({ telegram: 'unlink' }); return; }
+    const d = await dv({ telegram: 'link' }); if (!d?.link) return;
+    $('#dv-tg-say').replaceChildren(el('a', { href: d.link, target: '_blank', rel: 'noopener', text: 'Open Telegram and press Start' }), ` (the link is good for ${d.minutes} minutes)`);
+    clearInterval(poll); let n = 0;
+    poll = setInterval(async () => { if (++n > 200) { clearInterval(poll); poll = null; return; } if (document.hidden) return; const r = await api('/api/deliver', null, head); if (r.ok && r.data.telegram?.linked) drawDv(r.data); }, 3000);
+  });
+  api('/api/deliver', null, head).then((r) => { if (r.ok) drawDv(r.data); });
+  await load(); setInterval(() => { if (!document.hidden && !document.querySelector('.rate-x.on')) load(); }, 60_000);
+}
+
+// ---- one long job: its steps as they happen, and the result. Whoever has the address can read it. ----
+async function pageJob() {
+  const id = new URLSearchParams(location.search).get('id') || '';
+  const say = (t) => { $('#j-say').textContent = t; $('#j-say').hidden = !t; };
+  if (!/^[0-9a-f]{32}$/.test(id)) { say('This address has no job in it. Start a long job from any agent\'s page, under "Pay by card".'); return; }
+  let code = null; try { const v = localStorage.getItem('zl-credit'); code = /^[0-9a-f]{64}$/.test(v || '') ? v : null; } catch {}
+  const head = code ? { 'x-credits': code } : {};
+  const clock = (iso) => new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const LABEL = { working: 'Working', done: 'Done', failed: 'Did not finish', stopped: 'Stopped' };
+  let timer = 0, sig = '', shown = false;
+  const act = async (action) => { $('#j-err').textContent = ''; const r = await api('/api/jobs/' + id, { action }, head); if (!r.ok) $('#j-err').textContent = r.data.error || 'That did not go through.'; await load(); };
+  const step = (s) => el('div', { class: 'jstep ' + s.status },
+    el('span', { class: 'jdot', 'aria-hidden': 'true' }),
+    el('div', { class: 'stack', style: 'gap:4px;min-width:0' },
+      el('div', { class: 'row', style: 'gap:6px 10px;flex-wrap:wrap' }, el('b', { text: s.title }), el('span', { class: 'note', text: s.status === 'working' ? 'Working now…' : s.status === 'failed' ? 'Did not deliver' : clock(s.at) + (s.paid != null ? ' · paid ' + usd(s.paid) : '') }), s.run && s.status === 'done' ? el('a', { class: 'note', href: '/api/runs/' + s.run, target: '_blank', rel: 'noopener', text: 'Receipt' }) : null),
+      s.notes ? el('details', {}, el('summary', { class: 'note', style: 'cursor:pointer', text: 'Its notes from this step' }), el('p', { class: 'note', style: 'white-space:pre-wrap;overflow-wrap:anywhere;margin-top:6px', text: s.notes })) : null,
+      s.error ? el('p', { class: 'note', text: s.error }) : null));
+  async function load() {
+    clearTimeout(timer);
+    const r = await api('/api/jobs/' + id, null, head, { cache: 'no-store' });
+    if (!r.ok) { say(r.data.error || 'This job is not answering. Try again in a moment.'); if (r.status !== 404) timer = setTimeout(load, 8000); return; }
+    const j = r.data.job; say(''); $('#j-body').hidden = false;
+    $('#j-agent').textContent = j.agent || 'Unit ' + j.agent_id; $('#j-agent').href = '/a/' + j.agent_id;
+    $('#j-status').textContent = LABEL[j.status] || j.status; $('#j-status').className = 'chip' + (j.status === 'working' || j.status === 'done' ? ' hot' : '');
+    $('#j-goal').textContent = shownAsk(j.goal);
+    $('#j-cost').textContent = `${j.runs} of at most ${j.max_steps} runs used · ${usd(j.paid)} paid so far · ${usd(j.price)} a run`;
+    $('#j-note').textContent = j.note || (j.status === 'working' ? 'You can close this page. The job carries on, and the result will be here and in your inbox.' : '');
+    const now = JSON.stringify(j.steps);
+    if (now !== sig) { sig = now; $('#j-steps').replaceChildren(...j.steps.map(step)); }
+    $('#j-act').replaceChildren(...(j.mine ? [j.status === 'working' ? el('button', { class: 'pill quiet sm', type: 'button', text: 'Stop the job', onclick: () => act('cancel') }) : null, j.can_resume ? el('button', { class: 'pill sm', type: 'button', text: 'Carry on', onclick: () => act('resume') }) : null, j.can_resume ? el('button', { class: 'pill quiet sm', type: 'button', text: 'Stop for good', onclick: () => act('cancel') }) : null].filter(Boolean) : []));
+    if (j.report && !shown) { shown = true; $('#j-report-box').hidden = false; $('#j-report').replaceChildren(...(await answer(j.report)), keepRow(j.report, $('#j-report'))); $('#j-rate').replaceChildren(...(j.review ? await rate({ run: j.run, review: j.review }) : [])); }
+    if (j.status === 'working') timer = setTimeout(load, 4000);
+  }
+  $('#j-copy').addEventListener('click', async () => { try { await navigator.clipboard.writeText(location.href); $('#j-copy').textContent = 'Link copied'; } catch {} });
+  await load();
+}
+
+async function pageDashboard() {
+  const cfg = await config();
+  const say = (t, cls = 'note') => { const e = $('#d-say'); e.className = cls; e.textContent = t; };
+  const stamp = (iso) => new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  const dayName = (d) => new Date(d + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+  const who = (r) => r.kind === 'you' ? 'You' : r.kind === 'sample' ? 'Free sample (your credit)' : r.kind === 'card' ? 'Card customers' : r.kind === 'zerolux' ? 'Zero Lux test wallet' : r.kind === 'agent' ? el('a', { href: '/a/' + r.agent_id, text: 'Agent: ' + r.name }) : el('a', { class: 'mono', href: cfg.explorer + '/address/' + r.payer, target: '_blank', rel: 'noopener', text: short(r.payer) });
+  const OUT = { delivered: 'Delivered', refunded: 'Refunded', kept: 'Not delivered, payment kept' };
+  let me = null, D = null;
+  const td = (kid, cls) => el('td', cls ? { class: cls } : {}, kid);
+  function draw() {
+    const mine = me && me.toLowerCase() === D.owner.toLowerCase(), t = D.totals;
+    $('#d-none').hidden = D.agents.length > 0; $('#d-body').hidden = !D.agents.length;
+    say(D.agents.length ? `Showing ${short(D.owner)}${mine ? ', your wallet' : ''}. Figures are public and refresh about once a minute.${mine ? '' : ' Connect that wallet to withdraw.'}` : `Showing ${short(D.owner)}.`);
+    if (!D.agents.length) return;
+    $('#d-tiles').replaceChildren(...[['Income', usd(t.income)], ['Profit', usd(t.profit)], ['Ready to withdraw', usd(t.withdrawable)], ['Paid runs', t.runs.toLocaleString('en-US')], ['Customers', t.customers.toLocaleString('en-US')], ['Last 30 days', usd(t.paid_30d)]]
+      .map(([k, v]) => el('div', {}, el('span', { class: 'lbl', text: k }), el('b', { text: v }))));
+    const top = Math.max(1, ...D.daily.map((d) => Number(d.paid))), idle = `${usd(t.paid_30d)} from ${t.runs_30d} ${t.runs_30d === 1 ? 'run' : 'runs'} in 30 days`;
+    const tip = (d) => { $('#d-tip').textContent = d ? `${dayName(d.day)}: ${usd(d.paid)}, ${d.runs} ${d.runs === 1 ? 'run' : 'runs'}` : idle; };
+    $('#d-bars').replaceChildren(...D.daily.map((d) => {
+      const b = el('button', { type: 'button', 'aria-label': `${dayName(d.day)}: ${usd(d.paid)} from ${d.runs} runs`, title: `${dayName(d.day)}: ${usd(d.paid)}, ${d.runs} runs` }, el('i'));
+      b.firstChild.style.height = Number(d.paid) ? Math.max(2, (Number(d.paid) / top) * 100) + '%' : '0';
+      b.addEventListener('pointerenter', () => tip(d)); b.addEventListener('focus', () => tip(d)); b.addEventListener('pointerleave', () => tip()); b.addEventListener('blur', () => tip());
+      return b;
+    }));
+    $('#d-from').textContent = dayName(D.daily[0].day); $('#d-to').textContent = dayName(D.daily.at(-1).day) + ' (UTC)'; tip();
+    const o = D.outcomes; $('#d-out').textContent = `Paid runs in the last 30 days: ${o.delivered} delivered, ${o.refunded} refunded, ${o.kept} not delivered with the payment kept.`;
+    $('#d-agents').replaceChildren(...D.agents.map((a) => {
+      const s = a.stats || {}, ready = BigInt(s.withdrawable || 0);
+      const w = el('button', { class: 'pill quiet sm', type: 'button', text: 'Withdraw ' + usd(String(ready)) });
+      w.disabled = !mine || ready <= 0n; if (!mine) w.title = 'Connect the wallet that owns this agent to withdraw.';
+      w.addEventListener('click', async () => {
+        const err = (x, cls = 'err') => { $('#d-werr').className = cls; $('#d-werr').textContent = x; };
+        w.disabled = true;
+        try {
+          const from = await connect(); if (from.toLowerCase() !== D.owner.toLowerCase()) throw new Error('Connect the wallet that owns this agent (' + short(D.owner) + ').');
+          const h = await sendTx(from, a.wallet, cfg.selectors.withdraw + word(cfg.usdg) + word(D.owner) + uintWord(ready));
+          err(`Sent: ${usd(String(ready))} from ${a.name} to ${short(D.owner)}. Transaction ${short(h)}. The figures here catch up within about a minute.`, 'ok'); setTimeout(() => load(D.owner), 65_000);
+        } catch (e) { err(explain(e)); w.disabled = false; }
+      });
+      return el('tr', {}, td(el('a', { href: '/a/' + a.id, text: a.name })), td(el('span', { class: 'st', text: a.status === 'live' ? 'Live' : a.status === 'paused' ? 'Paused' : a.status === 'retired' ? 'Retired' : a.status })), td(usd(a.price), 'num'), td(String(a.runs), 'num'), td(usd(s.income), 'num'), td(usd(s.profit), 'num'), td(usd(String(ready)), 'num'), td(w));
+    }));
+    $('#d-cust').replaceChildren(...(D.customers.length ? D.customers.map((c) => el('tr', {}, td(el('span', { class: 'who' }, who(c))), td(String(c.runs), 'num'), td(usd(c.paid), 'num'), td(String(c.agents), 'num'), td(stamp(c.last)))) : [el('tr', {}, el('td', { colspan: '5', class: 'note', text: 'No paid runs yet.' }))]));
+    $('#d-recent').replaceChildren(...(D.recent.length ? D.recent.map((r) => el('tr', {}, td(stamp(r.created_at)), td(el('a', { href: '/a/' + r.agent_id, text: r.agent || '#' + r.agent_id })), td(el('span', { class: 'who' }, who(r))), td(usd(r.paid), 'num'), td((OUT[r.outcome] || r.status) + (r.stars ? ' · ' + '★'.repeat(r.stars) : '')), td(r.has_receipt ? el('a', { href: '/api/runs/' + r.run, target: '_blank', rel: 'noopener', text: 'Receipt' }) : ''))) : [el('tr', {}, el('td', { colspan: '6', class: 'note', text: 'No paid runs yet.' }))]));
+  }
+  async function load(owner) {
+    if (!/^0x[0-9a-fA-F]{40}$/.test(owner)) { say('That is not a wallet address.', 'err'); return; }
+    say('Loading…');
+    const r = await api('/api/owners/' + owner);
+    if (!r.ok) { say(r.data.error || 'That could not be loaded. Try again in a moment.', 'err'); return; }
+    D = r.data; $('#d-owner').value = D.owner; draw();
+  }
+  $('#d-connect').addEventListener('click', async () => { try { me = await connect(); $('#d-connect').textContent = short(me); await load(me); } catch (e) { say(explain(e), 'err'); } });
+  const view = () => load($('#d-owner').value.trim());
+  $('#d-view').addEventListener('click', view); $('#d-owner').addEventListener('keydown', (e) => { if (e.key === 'Enter') view(); });
+  const asked = new URLSearchParams(location.search).get('owner');
+  if (asked) await load(asked);
+  // A wallet this site is already connected to is shown straight away; nothing is asked of the wallet for that.
+  else try { const got = await eth()?.request({ method: 'eth_accounts' }); if (got && got[0]) { me = got[0]; $('#d-connect').textContent = short(me); await load(me); } } catch {}
+}
+
+({ create: pageCreate, floor: pageFloor, agent: pageAgent, lock: pageLock, dashboard: pageDashboard, inbox: pageInbox, job: pageJob })[document.body.dataset.page]?.().catch(() => {});

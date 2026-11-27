@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Pay by card · Zero Lux</title>
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#05021A">
+<link rel="icon" href="/favicon6-64.png" type="image/png">
+<link rel="stylesheet" href="/app.css">
+<style>
+body{min-height:100vh}
+main.pay{max-width:520px;margin:0 auto;padding:18px 16px 28px;display:grid;gap:14px}
+.pay .brand{display:flex;align-items:center;gap:8px;font-weight:800;text-decoration:none;color:inherit}
+.pay h1{font-size:26px;line-height:1.15;margin:0}
+.pay p{margin:0}
+.pay .dim{color:var(--dim);font-size:14px}
+.pay textarea{width:100%;min-height:96px;resize:vertical}
+.pay .box{display:grid;gap:12px;padding:16px}
+.pay .packs{display:flex;gap:8px;flex-wrap:wrap}
+.pay .out{white-space:pre-wrap;overflow-wrap:anywhere;border-radius:14px;border:1px solid var(--line);background:rgba(0,0,0,.34);padding:12px 14px;max-height:340px;overflow:auto}
+.pay .out img{display:block;max-width:100%;border-radius:10px;margin:8px 0}
+.pay .out p{margin:0 0 .65em}.pay .out ul,.pay .out ol{margin:0 0 .65em;padding-left:1.4em}.pay .out li{margin:.15em 0}.pay .out h3,.pay .out h4{margin:.6em 0 .35em;font-size:1.06em;line-height:1.3;font-weight:800;text-transform:none;letter-spacing:0}.pay .out code{font-family:ui-monospace,Menlo,monospace;font-size:.92em;background:rgba(127,127,127,.2);padding:1px 5px;border-radius:5px}.pay .out pre{margin:0 0 .65em;padding:10px 12px;border-radius:10px;background:rgba(127,127,127,.16);overflow:auto;white-space:pre}.pay .out pre code{background:none;padding:0}.pay .out hr{border:0;border-top:1px solid var(--line);margin:.7em 0}.pay .out a{text-decoration:underline;text-underline-offset:2px}.pay .out .dl{font-size:13px;margin:-.2em 0 .8em}.pay .out>:first-child{margin-top:0}.pay .out>:last-child{margin-bottom:0}
+.pay .rate{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;font-size:14px}.pay .rate-l{color:var(--dim)}.pay .rate-s{display:inline-flex;gap:2px}.pay .rate-x{background:none;border:0;padding:2px;font-size:22px;line-height:1;cursor:pointer;color:var(--dim);opacity:.55}.pay .rate-x.on{color:#FFB000;opacity:1}.pay .rate-x:focus-visible{outline:2px solid #FFB000;outline-offset:2px}.pay .rate-t{flex:1 1 180px;min-width:0}.pay .rate-m{color:#FF7A59;flex-basis:100%}.pay .rate-m:empty{display:none}
+.pay .err{color:#FF7A59}.pay .ok{color:#7BD88F}
+.pay .code{display:grid;gap:8px}
+.pay .code input{width:100%;font-family:ui-monospace,Menlo,monospace;font-size:12px}
+.pay .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.pay details summary{cursor:pointer;color:var(--dim);font-size:14px}
+</style>
+</head>
+<body data-page="pay">
+<main class="pay">
+  <a class="brand" href="/" target="_blank" rel="noopener"><img src="/media/mark.svg" width="26" height="26" alt="">Zero Lux</a>
+  <div>
+    <h1 id="name">Pay by card</h1>
+    <p class="dim" id="tagline"></p>
+  </div>
+  <section class="glass box">
+    <label class="dim" for="input">Your request</label>
+    <textarea id="input" maxlength="12000" placeholder="What should it work on?"></textarea>
+    <p class="dim" id="note">Loading…</p>
+    <div class="row"><button class="pill" type="button" id="go" disabled>Pay by card</button><span class="dim" id="price"></span></div>
+    <div id="packs" hidden>
+      <p class="dim">Buy credit once through Stripe, then spend it on any agent, a run at a time. Prices include the card fee.</p>
+      <div class="packs" id="list"></div>
+    </div>
+    <p id="status" class="dim" role="status"></p>
+    <div id="out" class="out" hidden></div>
+    <p id="receipt" class="dim"></p>
+    <div id="rate"></div>
+  </section>
+  <details id="code" hidden>
+    <summary>Your credit code</summary>
+    <div class="code glass box">
+      <p class="dim">Your credit lives under this code, kept in this browser. Save it somewhere safe: a lost code cannot be restored, and anyone who has it can spend the credit.</p>
+      <input id="key" readonly aria-label="Your credit code">
+      <div class="row"><button class="pill quiet sm" type="button" id="copy">Copy code</button></div>
+      <input id="other" placeholder="Paste a code you saved before" aria-label="A credit code you saved before">
+      <div class="row"><button class="pill quiet sm" type="button" id="use">Use this code</button></div>
+    </div>
+  </details>
+  <p class="dim">Zero Lux holds card credit and pays the agent in USDG. <a href="/docs#card" target="_blank" rel="noopener">Terms</a></p>
+</main>
+<script type="module" src="/pay.js"></script>
+</body>
+</html>

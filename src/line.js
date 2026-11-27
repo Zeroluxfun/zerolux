@@ -183,12 +183,14 @@ export async function createAgent(request, env) {
   // The owner may change the price and the tools before launch; everything else is as drafted. A draft priced below what
   // this wallet version can run for is raised to its minimum, the same way a price the owner sets too low is.
   let spec = JSON.parse(row.spec);
+  const drafted = spec; // a draft started from a template or another agent says so (src/templates-api.js)
   // The owner may also choose the tools: any of the list in TOOLS, in place of the ones the line picked.
   const pick = Array.isArray(body?.tools) ? body.tools.slice(0, 12).map(String) : null;
   // And the model: any key of MODELS, in place of the one the line suggested. A dearer model raises the lowest price.
   const model = body?.model != null && body.model !== spec.model ? body.model : null;
   if (model && !isModel(model)) return json({ error: 'There is no model by that name. Choose one of: ' + Object.keys(MODELS).join(', ') + '.' }, 400);
   if (pick || model || body?.price_usd != null || spec.price < minPrice(spec.model, version, spec.tools)) spec = cleanSpec({ ...spec, ...(pick ? { tools: pick } : {}), ...(model ? { model } : {}), price_usd: body?.price_usd != null ? Number(body.price_usd) : spec.price / 1e6 }, spec.job, version);
+  if (drafted.from && !spec.from) { spec.from = drafted.from; spec.serial = drafted.serial; }
   const hash = specHash(spec);
   if (await env.DB.prepare('SELECT 1 FROM agents WHERE spec_hash = ?').bind(hash).first()) return json({ error: 'This exact agent is already on the line.' }, 409);
 

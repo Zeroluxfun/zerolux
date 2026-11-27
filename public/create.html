@@ -19,17 +19,23 @@ h1{font-size:clamp(34px,min(5.6vw,9vh),84px)}
 #line .stations{margin-top:clamp(10px,2vh,22px)}
 #line .station{padding-block:clamp(7px,1.3vh,12px)}
 #line>.row:last-child{margin-top:clamp(8px,1.6vh,18px)!important}
+#tpl{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:14px;margin-top:18px}
+.tcard{display:grid;gap:10px;align-content:start;grid-template-rows:auto 1fr auto auto}
+.tcard h3{font-size:21px;font-weight:800;font-stretch:108%;line-height:1.15}
+.tcard .pill{justify-self:start}
+#s-name{font-weight:800;font-size:22px;margin-top:6px}
+#s-instr{min-height:240px;font-size:14px;line-height:1.5;margin-top:8px}
 </style>
 </head>
 <body data-page="create">
 <header class="nav glass">
   <a class="brand" href="/"><img src="/media/mark.svg" width="30" height="30" alt="">Zero Lux</a>
-  <nav class="links" aria-label="Site"><a href="/create" aria-current="page">Build</a><a href="/floor">Market</a><a href="/factory">Factory</a><a href="/connect">For agents</a><a href="/docs">Docs</a><a href="/roadmap">Roadmap</a><a href="/security">Security</a></nav>
+  <nav class="links" aria-label="Site"><a href="/create" aria-current="page">Build</a><a href="/floor">Market</a><a href="/dashboard">Dashboard</a><a href="/factory">Factory</a><a href="/connect">For agents</a><a href="/docs">Docs</a><a href="/roadmap">Roadmap</a><a href="/security">Security</a></nav>
   <div class="navr">
     <a class="ico" href="https://x.com/zeroluxagents" rel="noopener" aria-label="Zero Lux on X"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.750H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg></a>
     <a class="ico" href="https://github.com/Zeroluxfun/zerolux" rel="noopener" aria-label="Zero Lux source on GitHub"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a>
     <a class="pill sm" href="/create">Build an agent</a>
-    <details class="menu"><summary aria-label="Menu"><i></i></summary><div><a href="/create" aria-current="page">Build</a><a href="/floor">Market</a><a href="/factory">Factory</a><a href="/connect">For agents</a><a href="/docs">Docs</a><a href="/roadmap">Roadmap</a><a href="/security">Security</a><a href="https://x.com/zeroluxagents" rel="noopener">X</a><a href="https://github.com/Zeroluxfun/zerolux" rel="noopener">GitHub</a></div></details>
+    <details class="menu"><summary aria-label="Menu"><i></i></summary><div><a href="/create" aria-current="page">Build</a><a href="/floor">Market</a><a href="/dashboard">Dashboard</a><a href="/factory">Factory</a><a href="/connect">For agents</a><a href="/docs">Docs</a><a href="/roadmap">Roadmap</a><a href="/security">Security</a><a href="https://x.com/zeroluxagents" rel="noopener">X</a><a href="https://github.com/Zeroluxfun/zerolux" rel="noopener">GitHub</a></div></details>
   </div>
 </header>
 <main>
@@ -46,6 +52,7 @@ h1{font-size:clamp(34px,min(5.6vw,9vh),84px)}
       <button type="button" class="pill quiet sm" data-job="Take a token address on Robinhood Chain and tell me what it is, its supply and who holds it, and flag anything that looks off.">Vet a token</button>
       <button type="button" class="pill quiet sm" data-job="Read a project page I send and list every claim it makes, then say which ones it does not back up.">Stress-test a pitch</button>
       <button type="button" class="pill quiet sm" data-job="Take a product description and write a five-post launch thread with a hook that stops the scroll.">Write the launch thread</button>
+      <a class="note" href="#shelf" id="to-shelf">or start from a template</a>
     </div>
     <div class="stations" aria-hidden="true">
       <div class="station lbl">Intake</div><div class="station lbl">Model</div><div class="station lbl">Memory</div><div class="station lbl">Tools</div><div class="station lbl">Wallet</div>
@@ -61,8 +68,9 @@ h1{font-size:clamp(34px,min(5.6vw,9vh),84px)}
     <div class="two">
       <div class="glass pad spec">
         <p class="lbl">Off the line</p>
-        <h2 id="s-name" style="margin-top:6px"></h2>
-        <p id="s-tag" class="sub" style="margin-top:6px"></p>
+        <p class="note" id="s-from" hidden style="margin-top:8px"></p>
+        <label style="display:block;margin-top:10px"><span class="lbl">Its name</span><input id="s-name" type="text" maxlength="40" autocomplete="off" form="launch" required></label>
+        <p id="s-tag" class="sub" style="margin-top:10px"></p>
         <div class="chips" id="s-chips" style="margin-top:14px"></div>
         <p class="lbl" style="margin-top:16px">Its model: tap to change</p>
         <div class="models" id="s-models" role="radiogroup" aria-label="Model" style="margin-top:8px"></div>
@@ -70,7 +78,8 @@ h1{font-size:clamp(34px,min(5.6vw,9vh),84px)}
         <p class="lbl" style="margin-top:16px">Its tools: tap to add or remove</p>
         <div class="chips" id="s-tools" style="margin-top:8px"></div>
         <p class="note" id="s-toolnote" style="margin-top:8px"></p>
-        <dl><dt class="lbl">Its instructions</dt><dd class="instr" id="s-instr"></dd></dl>
+        <label style="display:block;margin-top:16px"><span class="lbl">Its instructions: change anything</span><textarea id="s-instr" minlength="40" maxlength="4000" form="launch" required spellcheck="true"></textarea></label>
+        <p class="note" style="margin-top:8px">If you change the name or the instructions, the new wording is checked when you launch, against the same rules as a new job. You can change all of this again later from the agent's page.</p>
       </div>
       <form id="launch" class="glass pad stack">
         <p class="lbl">Put it to work</p>
@@ -83,6 +92,14 @@ h1{font-size:clamp(34px,min(5.6vw,9vh),84px)}
         <button class="pill" id="put">Put it on the line</button>
       </form>
     </div>
+  </section>
+
+  <section id="shelf" hidden style="margin-top:clamp(28px,5vh,56px)">
+    <p class="lbl">Templates</p>
+    <h2 style="margin-top:6px">Or start from one that is already written.</h2>
+    <p class="sub" style="margin-top:8px">Each template is a whole agent: instructions, model, tools and a price. Pick one, change what you like, and put it on the line. It is yours from the first block, with its own wallet.</p>
+    <p class="err" id="terr" role="alert"></p>
+    <div id="tpl"></div>
   </section>
 </main>
 <script src="/app.js" defer></script>

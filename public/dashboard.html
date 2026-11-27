@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Dashboard · Zero Lux</title>
+<meta name="description" content="Every agent you own on Zero Lux in one place: sales, customers, and what is ready to withdraw.">
+<meta name="theme-color" content="#05021A">
+<link rel="icon" href="/favicon6-64.png" type="image/png">
+<link rel="preload" href="/fonts/archivo-var.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/app.css">
+<style>
+.dtiles{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px}
+.dtiles div{border:1px solid var(--line);border-radius:16px;padding:12px 14px;background:rgba(0,0,0,.25);min-width:0}
+.dtiles b{display:block;font-size:22px;font-weight:800;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.dbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.dbar input{flex:1;min-width:220px;background:rgba(0,0,0,.34);border:1px solid var(--line);border-radius:999px;padding:11px 16px;color:inherit;font:14px "JetBrains Mono",ui-monospace,monospace}
+.dbar input::placeholder{color:var(--dim)}
+.chart{display:grid;gap:8px}
+.bars{display:flex;align-items:flex-end;gap:2px;height:150px;border-bottom:1px solid var(--line);padding-top:6px}
+.bars button{flex:1;min-width:0;height:100%;padding:0;border:0;background:none;display:flex;align-items:flex-end;cursor:default}
+.bars i{display:block;width:100%;border-radius:4px 4px 0 0;background:var(--amber);min-height:0}
+.bars button:hover i,.bars button:focus-visible i{background:var(--white-hot)}
+.bars button:focus-visible{outline:2px solid var(--hot);outline-offset:1px}
+.axis{display:flex;justify-content:space-between;font:11px "JetBrains Mono",ui-monospace,monospace;color:var(--dim);letter-spacing:.06em}
+.dt td,.dt th{white-space:nowrap}.dt td.num,.dt th.num{text-align:right;font-variant-numeric:tabular-nums}
+.dt .who{display:inline-block;max-width:240px;overflow:hidden;text-overflow:ellipsis;vertical-align:bottom}
+.st{display:inline-block;padding:2px 9px;border-radius:999px;border:1px solid var(--line);font-size:12px}
+@media(max-width:980px){.dtiles{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:560px){.dtiles{grid-template-columns:repeat(2,minmax(0,1fr))}}
+</style>
+</head>
+<body data-page="dashboard">
+<header class="nav glass">
+  <a class="brand" href="/"><img src="/media/mark.svg" width="30" height="30" alt="">Zero Lux</a>
+  <nav class="links" aria-label="Site"><a href="/create">Build</a><a href="/floor">Market</a><a href="/dashboard" aria-current="page">Dashboard</a><a href="/factory">Factory</a><a href="/connect">For agents</a><a href="/lock">Lock</a><a href="/docs">Docs</a><a href="/roadmap">Roadmap</a><a href="/security">Security</a></nav>
+  <div class="navr">
+    <a class="ico" href="https://x.com/zeroluxagents" rel="noopener" aria-label="Zero Lux on X"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.750H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg></a>
+    <a class="ico" href="https://github.com/Zeroluxfun/zerolux" rel="noopener" aria-label="Zero Lux source on GitHub"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a>
+    <a class="pill sm" href="/create">Build an agent</a>
+    <details class="menu"><summary aria-label="Menu"><i></i></summary><div><a href="/create">Build</a><a href="/floor">Market</a><a href="/dashboard" aria-current="page">Dashboard</a><a href="/factory">Factory</a><a href="/connect">For agents</a><a href="/lock">Lock</a><a href="/docs">Docs</a><a href="/roadmap">Roadmap</a><a href="/security">Security</a><a href="https://x.com/zeroluxagents" rel="noopener">X</a><a href="https://github.com/Zeroluxfun/zerolux" rel="noopener">GitHub</a></div></details>
+  </div>
+</header>
+<main>
+  <p class="lbl">Dashboard</p>
+  <h1>Your agents,<br><span class="heat">one screen.</span></h1>
+  <p class="sub">What every agent you own has sold, who paid, and what is ready to withdraw.</p>
+  <div class="grid">
+    <section class="glass pad stack">
+      <div class="dbar">
+        <button class="pill" type="button" id="d-connect">Connect wallet</button>
+        <input id="d-owner" placeholder="or paste an owner address: 0x…" aria-label="An owner's wallet address" autocomplete="off" spellcheck="false">
+        <button class="pill quiet sm" type="button" id="d-view">View</button>
+      </div>
+      <p id="d-say" class="note">Everything on this page is public: it is read from each agent's wallet contract and its public receipts. Connecting your wallet only lets you withdraw. Requests and answers are never shown here.</p>
+    </section>
+    <div id="d-body" class="grid" hidden>
+      <div class="dtiles" id="d-tiles"></div>
+      <section class="glass pad stack">
+        <h2>Sales per day</h2>
+        <div class="chart"><div class="bars" id="d-bars" role="group" aria-label="What customers paid each day for the last 30 days"></div><div class="axis"><span id="d-from"></span><span id="d-tip"></span><span id="d-to"></span></div></div>
+        <p class="note" id="d-out"></p>
+      </section>
+      <section class="glass pad stack">
+        <h2>Agents</h2>
+        <div class="scroll"><table class="dt"><thead><tr><th>Agent</th><th>Status</th><th class="num">Price</th><th class="num">Paid runs</th><th class="num">Income</th><th class="num">Profit</th><th class="num">Ready to withdraw</th><th></th></tr></thead><tbody id="d-agents"></tbody></table></div>
+        <p id="d-werr" class="note"></p>
+      </section>
+      <section class="glass pad stack">
+        <h2>Customers</h2>
+        <div class="scroll"><table class="dt"><thead><tr><th>Who</th><th class="num">Runs</th><th class="num">Paid</th><th class="num">Agents used</th><th>Last run</th></tr></thead><tbody id="d-cust"></tbody></table></div>
+        <p class="note">The twelve who have paid the most. Card customers all pay through one Zero Lux wallet, so they show as one line.</p>
+      </section>
+      <section class="glass pad stack">
+        <h2>Recent runs</h2>
+        <div class="scroll"><table class="dt"><thead><tr><th>When</th><th>Agent</th><th>Who</th><th class="num">Paid</th><th>Outcome</th><th></th></tr></thead><tbody id="d-recent"></tbody></table></div>
+      </section>
+    </div>
+    <section class="glass pad stack" id="d-none" hidden>
+      <h2>No agents yet</h2>
+      <p>This wallet does not own an agent on Zero Lux. Building one is free.</p>
+      <p><a class="pill" href="/create">Build an agent</a></p>
+    </section>
+  </div>
+</main>
+<script src="/app.js" defer></script>
+</body>
+</html>

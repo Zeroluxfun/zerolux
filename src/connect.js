@@ -166,7 +166,9 @@ export async function callTool(env, conn, secret, sess, name, args, ms) {
     const parts = (Array.isArray(r.content) ? r.content : []).map((c) => (c?.type === 'text' && typeof c.text === 'string' ? c.text : c?.type ? `[${line(c.type, 20)} left out]` : '')).filter(Boolean);
     let text = parts.join('\n').trim();
     if (!text && r.structuredContent != null) text = JSON.stringify(r.structuredContent);
-    text = (text || 'The tool returned nothing.').slice(0, RESULT_CHARS);
+    text = text || 'The tool returned nothing.';
+    // Say so when an answer is cut, so the agent knows the rest is missing and can ask the tool for less.
+    if (text.length > RESULT_CHARS) text = text.slice(0, RESULT_CHARS) + `\n[Cut here: this is the first ${RESULT_CHARS} of ${text.length} characters. The rest was not read. Ask the tool for a narrower answer if you need it.]`;
     return (r.isError ? 'The tool reported an error: ' : '') + text;
   } catch (e) { return 'The connected tool did not work: ' + line(e?.name === 'TimeoutError' ? 'it took too long' : e?.message, 200) + '. Carry on without it.'; }
 }

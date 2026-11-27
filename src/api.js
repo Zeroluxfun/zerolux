@@ -1,15 +1,25 @@
 // Read side: the floor (every agent with its on-chain record), one agent,
 // the ERC-8004 card, and what a browser wallet needs to act on a wallet.
+import { JOB_STEPS, MAX_JOBS, JOB_KEEP_DAYS } from './jobs.js';
 import { getAddress, toFunctionSelector } from 'viem';
 import { reader, walletAbi, wallet3Abi, usdgAbi, registryAbi, factoryOf, operatorAddress, USDG, CHAIN_ID, EXPLORER, IDENTITY } from './chain.js';
 import { json, MODELS, TOOLS, TOOL_FLOOR, modelsFor, newAgentVersion } from './line.js';
-import { RATES, NETWORK_COST, networkCost, RECEIPT_FORMULA, RUN_SPEC } from './run.js';
+import { RATES, NETWORK_COST, networkCost, RECEIPT_FORMULA, RUN_SPEC, budgetFor } from './run.js';
+import { telegramOn } from './deliver.js';
+import { copyOff } from './templates-api.js';
+import { readFrom, TEMPLATES } from './templates.js';
+import { fileRoom, MAX_FILES, TEXT_CHARS, IMAGE_ROOM, FILE_KEEP_DAYS } from './files.js';
 import { storedHash } from './revise.js';
 import { publicConnections } from './connect.js';
+import { publicPaid, paidBy } from './paytools.js';
 import { luxConfig, wholeTokens } from './burn.js';
 import { lockConfig } from './lock.js';
-import { cardConfig } from './credits.js';
+import { cardConfig, cardOn, cardPayer } from './credits.js';
 import { profiles, photoPath } from './profile-api.js';
+import { samplesFor } from './samples.js';
+import { WATCH_COINS } from './tools.js';
+import { ratings, latestReviews } from './reviews.js';
+import { verifiedOnly, receiptTap } from './tap-api.js';
 
 const address = (a) => String(a.wallet).toLowerCase();
 const FRESH_MS = 60_000; // chain figures are re-read at most once a minute per agent
@@ -105,11 +115,23 @@ function view(env, a, full) {
     featured_until: a.featured_until || null, featured: !!a.featured_until && Date.parse(a.featured_until) > Date.now(),
   };
   // The profile its owner set (src/profile-api.js): a picture, and links. `built_tagline` is the line it was built with.
+  // What paying customers made of it (src/reviews.js), and whether a visitor can try it once for free right now (src/samples.js).
+  v.rating = a.rating || { count: 0, average: null }; v.free_sample = !!a.sample?.available;
+  // Files: about how many characters of attached text one run of this agent can read (src/files.js). A picture counts as IMAGE_ROOM.
+  v.file_chars = RATES[spec.model] ? fileRoom(Number(budgetFor(a.v || 1, BigInt(a.price), BigInt(feeOf(env, a.stats)))) - networkCost(a.v || 1), RATES[spec.model].in) : 0;
+  if (full) v.sample = a.sample ? { on: a.sample.on, per_day: a.sample.per_day, used_today: a.sample.used_today, funded: a.sample.funded } : null;
   v.photo = photoPath(a.id, a.profile); v.links = { x: a.profile?.x || null, site: a.profile?.site || null };
   if (a.lux_burned != null) v.lux_burned = a.lux_burned;
   if (full) v.built_tagline = spec.tagline || null;
+  // Starting a new agent from this one (src/templates-api.js): whether its owner allows it, and what this one was started from.
+  // Verified agents only (src/tap-api.js): its owner takes work only by a request a verified agent signed.
+  if (full) v.verified_only = !!a.tap_only;
+  if (full) { v.copyable = a.status === 'live' && !a.copy_off; v.copy_allowed = !a.copy_off; v.started_from = readFrom(spec.from); }
   // Each connection: its name, address, the fingerprint of its key if it has one (never the key), and the tools it gives the agent.
   if (full) v.connections = publicConnections(spec);
+  // Paid tools (src/paytools.js): endpoints it may pay per call out of a run's budget, with the owner's ceiling for each.
+  v.paid_tools_count = (spec.paid || []).length;
+  if (full) v.paid_tools = publicPaid(spec);
   if (full) Object.assign(v, { job: spec.job, instructions: spec.instructions, input_hint: spec.input_hint, model_key: spec.model, create_tx: a.create_tx,
     // `spec_hash` is the fingerprint of the version that is live now; `built_spec_hash` the one the factory contract recorded when the agent was made.
     spec_hash: storedHash(a.spec), built_spec_hash: a.spec_hash, revised_at: a.revised_at || null, revisions: `/api/agents/${a.id}/revisions` });
@@ -159,7 +181,7 @@ async function relations(env, rows) {
   }
 }
 
-const RECEIPT_COLS = 'r.id, r.agent_id, r.payer, r.paid, r.cost, r.status, r.pay_tx, r.charge_tx, r.attempts, r.tokens_in, r.tokens_out, r.input_hash, r.output_hash, r.created_at, r.finished_at, r.form, r.receipt_hash, r.model_id, r.refund_tx, r.refunded, r.parent, r.sub_paid, a.name, a.wallet, ' + RUN_SPEC + ' AS spec, COALESCE(r.rev, 1) AS rev, a.v, a.stats';
+const RECEIPT_COLS = 'r.id, r.agent_id, r.payer, r.paid, r.cost, r.status, r.pay_tx, r.charge_tx, r.attempts, r.tokens_in, r.tokens_out, r.input_hash, r.output_hash, r.created_at, r.finished_at, r.form, r.receipt_hash, r.model_id, r.refund_tx, r.refunded, r.parent, r.sub_paid, r.tap, a.name, a.wallet, ' + RUN_SPEC + ' AS spec, COALESCE(r.rev, 1) AS rev, a.v, a.stats';
 const SHOWN = "('ran', 'billed', 'unpaid', 'refunding', 'refunded')";
 
 // GET /api/runs/{id}: the public receipt for one paid run. Anyone can recompute the charge from it.
@@ -170,6 +192,9 @@ export async function getRun(env, id) {
   const r = await env.DB.prepare(`SELECT ${RECEIPT_COLS} FROM runs r JOIN agents a ON a.id = r.agent_id WHERE r.id = ? AND r.status IN ${SHOWN}`).bind(id.toLowerCase()).first();
   if (!r) return null;
   const out = receiptOf(env, r);
+  // What this run paid to paid tools (src/paytools.js). Each amount is part of `cost`: it was paid out by Zero Lux and charged to the agent's wallet with the run.
+  const tools = await paidBy(env, r.id);
+  if (tools.length) { out.paid_to_tools = String(tools.reduce((n, t) => n + Number(t.amount), 0)); out.tool_payments = tools; }
   if (r.v >= 3 && !r.parent) {
     const subs = (await env.DB.prepare(`SELECT ${RECEIPT_COLS} FROM runs r JOIN agents a ON a.id = r.agent_id WHERE r.parent = ? AND r.status IN ${SHOWN} ORDER BY r.created_at`).bind(r.id).all()).results;
     out.sub_runs = subs.map((x) => receiptOf(env, x));
@@ -188,9 +213,11 @@ function receiptOf(env, r) {
     // cost = what the model calls cost (never less than tokens x rates) + the network charge; the wallet is charged cost + fee.
     network_cost: String(networkCost(r.v)), cost: r.cost == null ? null : String(r.cost), markup_bps: markup, fee: fee == null ? null : String(fee),
     charged_to_wallet: fee == null ? null : String(r.cost + fee), input_hash: r.input_hash, output_hash: r.output_hash,
+    // Present only when the request that paid for the run was signed by a verified agent (src/tap-api.js).
+    ...(receiptTap(r.tap) ? { verified_agent: receiptTap(r.tap) } : {}),
     note: 'Amounts are USDG units (six decimals). Hashes are SHA-256 of the exact input and output text; the input hash is fixed when the payment is first presented. Runs made before receipts existed have no token counts or hashes.',
     ...(r.v >= 3 ? {
-      wallet_version: 3, payment_form: r.form === 'receive' ? 'ReceiveWithAuthorization' : 'TransferWithAuthorization',
+      wallet_version: r.v, payment_form: r.form === 'receive' ? 'ReceiveWithAuthorization' : 'TransferWithAuthorization',
       // The wallet contract publishes this value as `receipt` in the Charged event of the charge (or refund) transaction.
       receipt_hash: r.receipt_hash, receipt_formula: RECEIPT_FORMULA,
       receipt_fields: r.receipt_hash ? [r.id, r.model_id, r.tokens_in, r.tokens_out, r.cost ?? 0, r.input_hash ?? '', r.output_hash ?? ''].join('|') : null, // built from what was stored when the fingerprint was sealed
@@ -212,7 +239,7 @@ export async function listAgents(env) {
   await refresh(env, rows);
   await customers(env, rows);
   await relations(env, rows);
-  await profiles(env, rows);
+  await profiles(env, rows); await ratings(env, rows); await samplesFor(env, rows);
   const all = rows.map((a) => view(env, a, false));
   // A retired agent (replaced by a newer one) leaves the floor, but what it earned still counts. So does one its owner now meters.
   const agents = all.filter((a) => a.status !== 'retired' && a.status !== 'self-run');
@@ -227,7 +254,9 @@ export async function getAgent(env, a) {
   await refresh(env, [a]);
   await customers(env, [a]);
   await relations(env, [a]);
-  await profiles(env, [a]);
+  await profiles(env, [a]); await ratings(env, [a]); await samplesFor(env, [a]);
+  a.copy_off = await copyOff(env, a.id);
+  a.tap_only = await verifiedOnly(env, a.id);
   // All the $LUX ever burned to feature this agent, in whole tokens. Amounts are kept in token units (18 decimals), as text.
   // (If the burns table is missing the agent's page must still load, so that reads as nothing burned.)
   const burns = (await env.DB.prepare('SELECT amount FROM burns WHERE agent_id = ?').bind(a.id).all().catch(() => ({ results: [] }))).results;
@@ -235,7 +264,7 @@ export async function getAgent(env, a) {
   // When the live version was saved, for an agent that has been changed.
   if ((a.rev || 1) > 1) a.revised_at = (await env.DB.prepare('SELECT created_at FROM revisions WHERE agent_id = ? AND rev = ?').bind(a.id, a.rev).first().catch(() => null))?.created_at || null;
   const runs =(await env.DB.prepare("SELECT id, payer, paid, cost, status, pay_tx, charge_tx, created_at FROM runs WHERE agent_id = ? AND status IN ('ran', 'billed', 'unpaid') ORDER BY created_at DESC LIMIT 20").bind(a.id).all()).results;
-  return json({ agent: view(env, a, true), recent: runs }, 200, { 'cache-control': 'private, max-age=15' });
+  return json({ agent: view(env, a, true), recent: runs, reviews: await latestReviews(env, a.id) }, 200, { 'cache-control': 'private, max-age=15' });
 }
 
 // GET /card/<specHash>.json: the ERC-8004 registration file an identity points at.
@@ -283,6 +312,13 @@ export function config(env) {
     lock: lockConfig(env),
     // Paying by card: whether it is on, and the amounts of credit sold (credit in USDG units, the charge in cents, fee included).
     card: cardConfig(env),
+    // Standing orders (src/subs.js): the coins a price watch can be set on, how many orders one credit account may run, and how long results are kept.
+    orders: { coins: WATCH_COINS, max: 10, keep_days: 30 },
+    jobs: { steps: JOB_STEPS, max: MAX_JOBS, keep_days: JOB_KEEP_DAYS },
+    deliver: { webhook: true, telegram: telegramOn(env) },
+    // Templates (src/templates.js): ready-made agents to start from, listed at /api/templates.
+    templates: TEMPLATES.map((t) => t.key),
+    files: { max: MAX_FILES, text_chars: TEXT_CHARS, picture_counts_as: IMAGE_ROOM, keep_days: FILE_KEEP_DAYS },
     markupBps: Number(env.MARKUP_BPS), identity: IDENTITY, models: modelsFor(version), tools: TOOLS, tool_floor: TOOL_FLOOR,
     // What a run is charged: tokens in and out at these rates (USDG units, six decimals, per token), plus the network charge, plus the markup.
     // `networkCost` is the charge for the version new agents get; `networkCosts` lists it for every wallet version.
@@ -293,4 +329,52 @@ export function config(env) {
       setAgentWallet: sel('setAgentWallet(uint256,address,uint256,bytes)'), setPayable: sel('setPayable(address,bool)'),
     },
   }, 200, { 'cache-control': 'private, max-age=300' });
+}
+
+// GET /api/owners/{address}: one owner's agents and what they have sold, in one place. Everything here is already public
+// (the books are on chain and every paid run has a public receipt); this only gathers it. It never includes what a
+// customer asked or what an agent answered.
+const SOLD = "('ran', 'billed', 'unpaid', 'refunding', 'refunded', 'forfeit', 'failed')";
+export async function ownerBoard(env, who) {
+  if (!/^0x[0-9a-fA-F]{40}$/.test(who)) return json({ error: 'That is not a wallet address.' }, 400);
+  const owner = who.toLowerCase(), day = (ms) => new Date(ms).toISOString().slice(0, 10);
+  const days = Array.from({ length: 30 }, (_, i) => day(Date.now() - (29 - i) * 86_400_000));
+  const rows = (await env.DB.prepare(WITH_RUNS + ' WHERE lower(a.owner) = ? ORDER BY a.id DESC LIMIT 100').bind(owner).all()).results;
+  const zero = { agents: 0, runs: 0, income: '0', profit: '0', withdrawable: '0', customers: 0, paid_30d: '0', runs_30d: 0 };
+  if (!rows.length) return json({ owner: getAddress(owner), agents: [], totals: zero, daily: days.map((d) => ({ day: d, runs: 0, paid: '0' })), customers: [], recent: [], outcomes: { delivered: 0, refunded: 0, kept: 0 } }, 200, { 'cache-control': 'private, max-age=15' });
+  await refresh(env, rows); await customers(env, rows); await profiles(env, rows); await ratings(env, rows); await samplesFor(env, rows);
+  const ids = rows.map((a) => a.id), marks = ids.map(() => '?').join(','), since = days[0] + 'T00:00:00';
+  const all = (sql, ...more) => env.DB.prepare(sql).bind(...ids, ...more).all().then((r) => r.results);
+  const [daily, payers, count, recent, outcomes] = await Promise.all([
+    all(`SELECT substr(created_at, 1, 10) AS day, COUNT(*) AS runs, SUM(paid) AS paid FROM runs WHERE agent_id IN (${marks}) AND status IN ${PAID} AND created_at >= ? GROUP BY day`, since),
+    all(`SELECT payer, COUNT(*) AS runs, SUM(paid) AS paid, MAX(created_at) AS last, COUNT(DISTINCT agent_id) AS agents FROM runs WHERE agent_id IN (${marks}) AND status IN ${PAID} GROUP BY payer ORDER BY paid DESC LIMIT 12`),
+    all(`SELECT COUNT(DISTINCT payer) AS n FROM runs WHERE agent_id IN (${marks}) AND status IN ${PAID}`),
+    all(`SELECT id, agent_id, payer, paid, status, created_at, refunded, (SELECT 1 FROM credit_events e WHERE e.id = 'run:' || runs.id AND e.meta LIKE '%"sample":1%') AS sample, (SELECT stars FROM reviews v WHERE v.run_id = runs.id AND v.hidden = 0) AS stars FROM runs WHERE agent_id IN (${marks}) AND status IN ${SOLD} ORDER BY created_at DESC LIMIT 40`),
+    all(`SELECT status, COUNT(*) AS n FROM runs WHERE agent_id IN (${marks}) AND status IN ${SOLD} AND created_at >= ? GROUP BY status`, since),
+  ]);
+  // Who a payer is, where that can be told: the owner, card customers (they all pay through one Zero Lux wallet),
+  // Zero Lux's own test wallets, or another agent that hired this one.
+  const seen = [...new Set([...payers, ...recent].map((r) => String(r.payer).toLowerCase()))].slice(0, 90);
+  const hired = new Map(seen.length ? (await env.DB.prepare(`SELECT id, name, wallet FROM agents WHERE lower(wallet) IN (${seen.map(() => '?').join(',')})`).bind(...seen).all()).results.map((x) => [x.wallet.toLowerCase(), x]) : []);
+  const house = String(env.HOUSE_PAYERS || '').toLowerCase().split(',').map((x) => x.trim()).filter(Boolean);
+  const card = cardOn(env) ? cardPayer(env).address.toLowerCase() : null;
+  const kind = (p) => { p = String(p).toLowerCase(); const a = hired.get(p); return p === owner ? { kind: 'you' } : p === card ? { kind: 'card' } : house.includes(p) ? { kind: 'zerolux' } : a ? { kind: 'agent', agent_id: a.id, name: a.name } : { kind: 'customer' }; };
+  const stat = (a, k) => { try { return BigInt(JSON.parse(a.stats || '{}')[k] || 0); } catch { return 0n; } };
+  const sum = (k) => rows.reduce((n, a) => n + stat(a, k), 0n).toString();
+  const byDay = new Map(daily.map((d) => [d.day, d])), n = (...s) => outcomes.filter((o) => s.includes(o.status)).reduce((t, o) => t + o.n, 0);
+  const names = new Map(rows.map((a) => [a.id, a.name]));
+  return json({
+    owner: getAddress(owner),
+    agents: rows.map((a) => view(env, a, false)),
+    totals: { agents: rows.length, runs: rows.reduce((t, a) => t + (a.runs || 0), 0), income: sum('income'), profit: sum('profit'), withdrawable: sum('withdrawable'), customers: count[0]?.n || 0,
+      paid_30d: String(daily.reduce((t, d) => t + d.paid, 0)), runs_30d: daily.reduce((t, d) => t + d.runs, 0) },
+    // One entry per day for the last 30 days (UTC), oldest first: runs delivered and what their customers paid.
+    daily: days.map((d) => ({ day: d, runs: byDay.get(d)?.runs || 0, paid: String(byDay.get(d)?.paid || 0) })),
+    customers: payers.map((p) => ({ payer: p.payer, ...kind(p.payer), runs: p.runs, paid: String(p.paid), agents: p.agents, last: p.last })),
+    // The last 40 paid runs. `outcome`: delivered; refunded (nothing delivered, money went back); kept (paid, nothing delivered, the payment stayed with the agent).
+    recent: recent.map((r) => ({ run: r.id, agent_id: r.agent_id, agent: names.get(r.agent_id), payer: r.payer, ...(r.sample ? { kind: 'sample' } : kind(r.payer)), stars: r.stars ?? null, paid: String(r.paid), status: r.status,
+      outcome: ['refunding', 'refunded'].includes(r.status) ? 'refunded' : ['forfeit', 'failed'].includes(r.status) ? 'kept' : 'delivered', has_receipt: !['forfeit', 'failed'].includes(r.status), created_at: r.created_at })),
+    outcomes: { delivered: n('ran', 'billed', 'unpaid'), refunded: n('refunding', 'refunded'), kept: n('forfeit', 'failed') },
+    note: 'Amounts are USDG units (six decimals). Everything here is public: the books are read from each wallet contract and every run listed has a public receipt.',
+  }, 200, { 'cache-control': 'private, max-age=15' });
 }

@@ -100,6 +100,8 @@ New wording is checked against the same rules as a new agent, and a change that 
 
 To give an agent tools of its owner's own, add `"connections"` to the same call: a list of up to three MCP servers (streamable HTTP), each `{"name": "Orders", "url": "https://example.com/mcp", "secret": "the server's key, if it needs one"}`. The key travels as `Authorization: Bearer ...`; name another header with `"header"`. In step 1 Zero Lux asks each server for its tools and returns them inside `spec.connections`, with a fingerprint in place of the key. In step 3 send that `spec.connections` list back, with `"secret"` added again to any connection whose key is new. To keep a saved key, send its fingerprint as `"key"` instead. `"connections": []` removes them all; leaving `connections` out keeps them as they are. An agent calls at most 8 connected tools a run.
 
+To give an agent a tool that charges per call over x402, add `"paid"` to the same call (wallet versions 3 and 4 only): a list of up to four endpoints, each `{"name": "backtest", "description": "Backtests a strategy on a stock and returns the results.", "url": "https://example.com/backtest", "method": "GET", "max_usd": 0.03, "example": {"symbol": "AAPL", "days": 90}}`. The endpoint has to answer an unpaid request with 402 and x402 terms (version 1 or 2) that offer the `exact` scheme in USDG on `eip155:4663`, at or under `max_usd`. In step 1 Zero Lux asks it and returns the list inside `spec.paid` with the `price` and `pay_to` it found; in step 3 send that `spec.paid` list back. During a run the agent calls the tool as `paid_<name>` with the parameters of your example (a query string for GET, a JSON body for POST). Zero Lux pays the price with a signed USDG payment and adds it to the run's cost, so the agent's wallet is charged for it with the run, plus the usual fee. It pays only the `pay_to` on record and never more than `max_usd`; at most 4 paid calls a run; a run must be able to afford `max_usd` before a call is made. A payment that was sent is charged even if the tool then fails. `GET /api/runs/{id}` lists each payment under `tool_payments`, and an agent's 402 terms list its paid tools under `paid_tools`. `"paid": []` removes them all.
+
 Every version is public at `GET https://zerolux.fun/api/agents/{id}/revisions`, with the message the owner signed and the signature. A run that was already paid for finishes on the version it was bought under, and its receipt gives `agent.revision` and that version's `agent.spec_hash`.
 
 ### Models an agent can run on
@@ -130,7 +132,7 @@ The draft suggests `fast` or `smart`. You can name any of these in `model` when 
 | `calculate` | Exact arithmetic. |
 | `remember` | Keep short notes about each customer between runs. |
 
-Searches and pictures cost the agent money each time, so an agent with `web_search` cannot be priced below $0.05 a call and one with `make_image` not below $0.10. No tool can move money. An agent's tools are part of its spec and are fixed once it is on chain.
+Searches and pictures cost the agent money each time, so an agent with `web_search` cannot be priced below $0.05 a call and one with `make_image` not below $0.10. The built-in tools cannot move money. The one way a run pays anyone outside is a paid tool its owner added (below), or an agent on its owner's can-hire list. An agent's tools are part of its spec and are fixed once it is on chain.
 
 ## What it costs
 

@@ -94,6 +94,18 @@ const COINS = {
   shib: 'shiba-inu', usdc: 'usd-coin', usdt: 'tether',
 };
 
+// The coins a price watch can be set on (src/subs.js), and their US dollar prices right now: { btc: 97000.1, ... }.
+// A coin the feed has no price for is left out.
+export const WATCH_COINS = Object.keys(COINS);
+export async function coinPrices(symbols) {
+  const want = [...new Set(symbols.map((s) => String(s).toLowerCase()))].filter((s) => s in COINS).slice(0, 30);
+  if (!want.length) return {};
+  const now = await getJson('https://coins.llama.fi/prices/current/' + want.map((s) => 'coingecko:' + COINS[s]).join(','));
+  const out = {};
+  for (const s of want) { const c = now.coins?.['coingecko:' + COINS[s]]; if (c && Number.isFinite(Number(c.price)) && Date.now() / 1000 - Number(c.timestamp) < 1800) out[s] = Number(c.price); }
+  return out;
+}
+
 export const MARKET_DEF = {
   type: 'function',
   function: {

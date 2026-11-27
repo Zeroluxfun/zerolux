@@ -4,8 +4,8 @@
   "compatibility_date": "2026-09-01",
   "assets": { "directory": "./public", "binding": "ASSETS", "run_worker_first": true, "not_found_handling": "none" },
   "d1_databases": [{ "binding": "DB", "database_name": "zerolux", "database_id": "098dfda3-fe3d-4306-9bff-d8661231efe0" }],
-  "durable_objects": { "bindings": [{ "name": "SIGNER", "class_name": "Signer" }] },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Signer"] }],
+  "durable_objects": { "bindings": [{ "name": "SIGNER", "class_name": "Signer" }, { "name": "JOBS", "class_name": "JobRunner" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Signer"] }, { "tag": "v2", "new_sqlite_classes": ["JobRunner"] }],
   "triggers": { "crons": ["*/5 * * * *"] },
   // FACTORY (version 1), FACTORY2 (version 2), FACTORY3 (version 3) and TREASURY are the contracts on Robinhood Chain (4663). NEW_AGENT_VERSION is the
   // wallet version a new agent gets ("2" until version 3 is opened to everyone; a caller with the build key can ask for another with "version").
