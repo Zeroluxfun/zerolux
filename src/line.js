@@ -162,7 +162,8 @@ export async function line(request, env) {
 // POST /api/agents {draft, owner, price_usd?, tools?, model?, version?}: put a drafted agent on chain.
 // The factory pays the gas; the owner address owns the wallet from the first block.
 // New agents get the wallet version named by NEW_AGENT_VERSION. Only a caller holding the build key may name another.
-export async function createAgent(request, env) {
+// `shelfTools` (src/shelf.js) is handed in by the router: importing it here would make a circle of imports.
+export async function createAgent(request, env, { shelfTools } = {}) {
   const body = await readJson(request); if (!body) return json({ error: 'Send JSON.' }, 400);
   const owner = String(body?.owner || '');
   if (!isAddress(owner) || /^0x0{40}$/i.test(owner)) return json({ error: 'Enter the wallet address that should own this agent.' }, 400);
@@ -191,6 +192,13 @@ export async function createAgent(request, env) {
   if (model && !isModel(model)) return json({ error: 'There is no model by that name. Choose one of: ' + Object.keys(MODELS).join(', ') + '.' }, 400);
   if (pick || model || body?.price_usd != null || spec.price < minPrice(spec.model, version, spec.tools)) spec = cleanSpec({ ...spec, ...(pick ? { tools: pick } : {}), ...(model ? { model } : {}), price_usd: body?.price_usd != null ? Number(body.price_usd) : spec.price / 1e6 }, spec.job, version);
   if (drafted.from && !spec.from) { spec.from = drafted.from; spec.serial = drafted.serial; }
+  // Paid tools from the shelf (src/shelf.js), named by id: each goes into the spec as a paid tool the agent may pay per
+  // call out of a run's budget, up to the price it had on the shelf. They need a wallet that holds each run's payment.
+  if (shelfTools && Array.isArray(body?.shelf) && body.shelf.length) {
+    if (version < 3) return json({ error: 'Paid tools need wallet version 3 or newer.' }, 400);
+    try { const paid = await shelfTools(env, body.shelf); if (paid.length) spec.paid = paid; }
+    catch (e) { return json({ error: e.status ? e.message : 'Those tools could not be added. Try again in a minute.' }, e.status || 502); }
+  }
   const hash = specHash(spec);
   if (await env.DB.prepare('SELECT 1 FROM agents WHERE spec_hash = ?').bind(hash).first()) return json({ error: 'This exact agent is already on the line.' }, 409);
 

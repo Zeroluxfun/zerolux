@@ -115,8 +115,23 @@ async function pageCreate() {
       return b;
     }));
     $('#price').value = (s.price / 1e6).toFixed(2); fit();
+    // Paid tools from the shelf: any that are listed can be switched on before launch. The agent pays each call out of a run's budget.
+    shelf().then((list) => {
+      if (!list.length) return;
+      const note = () => { const on = list.filter((t) => shelfPicked.has(t.id)); $('#s-paidnote').textContent = on.length ? 'Each call to ' + on.map((t) => t.name + ' costs ' + usd(t.price)).join(', and to ') + ', paid out of the run it is used in. Set a price that covers the calls a job needs.' : ''; };
+      $('#s-paid').replaceChildren(...list.map((t) => {
+        const b = el('button', { type: 'button', class: 'chip pick' + (shelfPicked.has(t.id) ? ' on' : ''), text: t.name + ' · ' + usd(t.price) + ' a call', title: t.description, 'aria-pressed': String(shelfPicked.has(t.id)) });
+        b.addEventListener('click', () => { shelfPicked.has(t.id) ? shelfPicked.delete(t.id) : shelfPicked.add(t.id); b.classList.toggle('on', shelfPicked.has(t.id)); b.setAttribute('aria-pressed', String(shelfPicked.has(t.id))); note(); });
+        return b;
+      }));
+      $('#s-paidbox').hidden = false; note();
+    });
     $('#result').hidden = false; $('#result').scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
+  // The tool shelf, read once. A tool named in the address (/create?tool=id) starts switched on.
+  const shelfPicked = new Set(); let shelfList;
+  const shelf = () => (shelfList ||= api('/api/shelf').then((r) => (r.ok ? r.data.tools || [] : [])).catch(() => []));
+  { const want = new URLSearchParams(location.search).get('tool'); if (want && /^[0-9a-f]{16}$/.test(want)) { shelfPicked.add(want); shelf().then((list) => { const t = list.find((x) => x.id === want); if (t) job.placeholder = 'Describe the job. Your agent will have the "' + t.name + '" tool: ' + t.description; else shelfPicked.delete(want); }); } }
   // Starting from a template or from another agent: no model is asked, so the draft is there at once.
   const terr = $('#terr');
   const start = async (body, b) => {
@@ -162,7 +177,7 @@ async function pageCreate() {
       draft = { ...draft, draft: d.data.draft, spec: d.data.spec };
     }
     b.textContent = 'Putting it on chain…';
-    const r = await api('/api/agents', { draft: draft.draft, owner: $('#owner').value.trim(), price_usd: Number($('#price').value), tools: [...picked], model });
+    const r = await api('/api/agents', { draft: draft.draft, owner: $('#owner').value.trim(), price_usd: Number($('#price').value), tools: [...picked], model, ...(shelfPicked.size ? { shelf: [...shelfPicked] } : {}) });
     if (!r.ok) { b.disabled = false; b.textContent = 'Put it on the line'; e2.textContent = r.data.error || 'That did not work. Try again.'; return; }
     location.href = '/a/' + r.data.id + '?new=1';
   });
@@ -839,6 +854,13 @@ async function pageAgent() {
   if ($('#revise')) {
     for (const i of ['#e-name', '#e-hint', '#e-instr', '#e-price']) $(i).addEventListener('input', () => { eDirty = true; });
     $('#e-addconn').addEventListener('click', () => { if (eConns.length < MAX_CONNS) { eConns.push({ name: '', url: '', key: null, secret: '', tools: [] }); eDirty = cDirty = true; drawConns(); } });
+    $('#e-shelfgo').addEventListener('click', async () => {
+      const r = await api('/api/shelf'), list = r.ok ? r.data.tools || [] : [];
+      $('#e-shelf').replaceChildren(...(list.length ? list.map((t) => el('button', { type: 'button', class: 'chip pick', text: t.name + ' · ' + usd(t.price) + ' a call', title: t.description, onclick: () => {
+        if (ePaid.length >= MAX_PAID || ePaid.some((x) => x.url === t.url && x.method === t.method)) return;
+        ePaid.push({ name: t.name, description: t.description, url: t.url, method: t.method, example: t.example ? JSON.stringify(t.example) : '', max_usd: String(Number(t.price) / 1e6), price: null, pay_to: null }); eDirty = xDirty = true; drawPaid();
+      } })) : [el('span', { class: 'note', text: 'Nothing is on the shelf yet.' })]));
+    });
     $('#e-addpaid').addEventListener('click', () => { if (ePaid.length < MAX_PAID) { ePaid.push({ name: '', description: '', url: '', method: 'GET', example: '', max_usd: '', price: null, pay_to: null }); eDirty = xDirty = true; drawPaid(); } });
     $('#revise').addEventListener('submit', async (e) => {
       e.preventDefault(); const b = $('#e-save'); if (b.disabled) return; b.disabled = true; esay('');
@@ -1155,3 +1177,48 @@ async function pageDashboard() {
 }
 
 ({ create: pageCreate, floor: pageFloor, agent: pageAgent, lock: pageLock, dashboard: pageDashboard, inbox: pageInbox, job: pageJob })[document.body.dataset.page]?.().catch(() => {});
+
+// ---- the tool shelf: paid tools anyone can list and any builder can add ----
+if ($('#shelf-page')) {
+  const say = (t, cls = 'err') => { const e = $('#sh-ferr'); e.className = cls; e.textContent = t; };
+  const sign = async (from, message) => eth().request({ method: 'personal_sign', params: ['0x' + [...new TextEncoder().encode(message)].map((v) => v.toString(16).padStart(2, '0')).join(''), from] });
+  const need = async (who) => { const from = await connect(); if (from.toLowerCase() !== who.toLowerCase()) throw new Error('Connect the wallet the tool is paid at (' + short(who) + ') to sign this.'); return from; };
+  const load = async () => {
+    const r = await api('/api/shelf', null, {}, { cache: 'no-store' }), list = r.ok ? r.data.tools || [] : []; // (fresh, so a listing just made or removed shows at once)
+    $('#sh-empty').hidden = !!list.length;
+    $('#sh-list').replaceChildren(...list.map((t) => el('article', { class: 'glass pad stack' },
+      el('h3', { text: t.name }), el('p', { class: 'note', text: t.description }),
+      el('div', { class: 'chips' }, el('span', { class: 'chip hot', text: usd(t.price) + ' a call' }), el('span', { class: 'chip', text: t.host }), el('span', { class: 'chip', text: 'Paid to ' + short(t.pay_to) })),
+      el('div', { class: 'row' }, el('a', { class: 'pill quiet sm', href: '/create?tool=' + t.id, text: 'Build an agent with it' }),
+        el('button', { type: 'button', class: 'pill quiet sm', text: 'Take it off', title: 'Only the wallet that listed it can', onclick: async (e) => {
+          const b = e.currentTarget, err = $('#sh-err'); err.textContent = ''; b.disabled = true;
+          try {
+            const path = '/api/shelf/' + t.id + '/remove', first = await api(path, { prepare: true });
+            if (!first.ok) throw new Error(first.data.error || 'That did not go through.');
+            const from = await need(first.data.sign_with), signature = await sign(from, first.data.message);
+            const done = await api(path, { time: first.data.time, signature });
+            if (!done.ok) throw new Error(done.data.error || 'That did not go through.');
+            await load();
+          } catch (x) { err.textContent = explain(x); }
+          b.disabled = false;
+        } })),
+      el('p', { class: 'note', text: 'Already have an agent? Open its page, then Change what it does, then Add from the shelf.' }))));
+  };
+  load();
+  $('#sh-form').addEventListener('submit', async (e) => {
+    e.preventDefault(); const b = $('#sh-go'); if (b.disabled) return; b.disabled = true; say('');
+    try {
+      const want = { name: $('#sh-name').value.trim(), description: $('#sh-desc').value, url: $('#sh-url').value.trim(), method: $('#sh-method').value, ...($('#sh-example').value.trim() ? { example: $('#sh-example').value.trim() } : {}) };
+      b.replaceChildren(el('span', { class: 'spin' }), ' Asking your tool what it charges…');
+      const first = await api('/api/shelf', { prepare: true, ...want });
+      if (!first.ok) throw new Error(first.data.error || 'That did not go through. Try again.');
+      b.replaceChildren(el('span', { class: 'spin' }), ' Sign in your wallet…');
+      const from = await need(first.data.sign_with), signature = await sign(from, first.data.message);
+      b.replaceChildren(el('span', { class: 'spin' }), ' Listing…');
+      const done = await api('/api/shelf', { ...want, time: first.data.time, signature });
+      if (!done.ok) throw new Error(done.data.error || 'That did not go through. Try again.');
+      say('Listed at ' + usd(done.data.tool.price) + ' a call. Builders can add it now.', 'ok'); e.target.reset(); await load();
+    } catch (x) { say(explain(x)); }
+    b.disabled = false; b.textContent = 'List it';
+  });
+}

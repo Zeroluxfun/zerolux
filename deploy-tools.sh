@@ -53,5 +53,7 @@ add "CREATE TABLE IF NOT EXISTS tap_nonces (id TEXT PRIMARY KEY, run TEXT NOT NU
 add "CREATE TABLE IF NOT EXISTS tool_payments (id INTEGER PRIMARY KEY AUTOINCREMENT, run TEXT NOT NULL, agent_id INTEGER NOT NULL, tool TEXT NOT NULL, host TEXT NOT NULL, pay_to TEXT NOT NULL, amount INTEGER NOT NULL, nonce TEXT NOT NULL, status TEXT NOT NULL, tx TEXT, at TEXT NOT NULL)"
 add "CREATE INDEX IF NOT EXISTS tool_payments_run ON tool_payments (run)"
 add "CREATE INDEX IF NOT EXISTS tool_payments_at ON tool_payments (at)"
+# The tool shelf (src/shelf.js): paid tools listed for any builder to add.
+add "CREATE TABLE IF NOT EXISTS shelf (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL, url TEXT NOT NULL, method TEXT NOT NULL, example TEXT, price INTEGER NOT NULL, pay_to TEXT NOT NULL, host TEXT NOT NULL, lister TEXT NOT NULL, signature TEXT, signed_at TEXT, status TEXT NOT NULL DEFAULT 'listed', fails INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, checked_at TEXT NOT NULL)"
 echo "Database ready."
 npx wrangler deploy

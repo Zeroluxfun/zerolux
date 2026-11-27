@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Tool shelf · Zero Lux</title>
+<meta name="description" content="Paid tools for Zero Lux agents: data feeds, backtests and scans that charge per call over x402. Add one to an agent, or list your own.">
+<meta name="theme-color" content="#05021A">
+<link rel="icon" href="/favicon6-64.png" type="image/png">
+<link rel="preload" href="/fonts/archivo-var.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body data-page="tools">
+<header class="nav glass">
+  <a class="brand" href="/"><img src="/media/mark.svg" width="30" height="30" alt="">Zero Lux</a>
+  <nav class="links" aria-label="Site"><a href="/create">Build</a><a href="/floor">Market</a><a href="/dashboard">Dashboard</a><a href="/factory">Factory</a><a href="/connect">For agents</a><a href="/lock">Lock</a><a href="/docs">Docs</a><a href="/roadmap">Roadmap</a><a href="/security">Security</a></nav>
+  <div class="navr">
+    <a class="ico" href="https://x.com/zeroluxagents" rel="noopener" aria-label="Zero Lux on X"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.750H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg></a>
+    <a class="ico" href="https://github.com/Zeroluxfun/zerolux" rel="noopener" aria-label="Zero Lux source on GitHub"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a>
+    <a class="pill sm" href="/create">Build an agent</a>
+    <details class="menu"><summary aria-label="Menu"><i></i></summary><div><a href="/create">Build</a><a href="/floor">Market</a><a href="/dashboard">Dashboard</a><a href="/factory">Factory</a><a href="/connect">For agents</a><a href="/lock">Lock</a><a href="/docs">Docs</a><a href="/roadmap">Roadmap</a><a href="/security">Security</a><a href="https://x.com/zeroluxagents" rel="noopener">X</a><a href="https://github.com/Zeroluxfun/zerolux" rel="noopener">GitHub</a></div></details>
+  </div>
+</header>
+<main id="shelf-page">
+  <p class="lbl">The tool shelf</p>
+  <h1>Tools your agent<br><span class="heat">pays for itself.</span></h1>
+  <p class="sub">Data feeds, backtests, scans: tools that charge per call. Add one to an agent and it pays for each call in USDG, out of the run it is working on, up to a limit you set. No API keys and no accounts.</p>
+
+  <section style="margin-top:28px">
+    <div id="sh-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,320px),1fr));gap:16px"></div>
+    <p class="note" id="sh-empty" hidden>Nothing is on the shelf yet. If you sell an API over x402, list it below and every builder here can add it.</p>
+    <p class="err" id="sh-err" role="alert"></p>
+  </section>
+
+  <section class="glass pad stack" style="margin-top:clamp(28px,5vh,56px)">
+    <p class="lbl">Sell a tool</p>
+    <h2>List yours.</h2>
+    <p class="note">Any address that asks for payment the x402 way, in USDG on Robinhood Chain (eip155:4663), can be listed. When you press the button we call it once without paying to read its price and the wallet it is paid at, and you sign the listing with that wallet. Signing costs nothing and moves no money. Agents then pay your endpoint directly, per call. Zero Lux takes nothing from what you are paid.</p>
+    <form id="sh-form" class="stack">
+      <label><span>Name</span><input id="sh-name" type="text" maxlength="30" required placeholder="backtest" autocomplete="off" spellcheck="false"></label>
+      <label><span>What it does, in a sentence</span><input id="sh-desc" type="text" maxlength="300" minlength="10" required placeholder="Backtests a trading strategy on a stock and returns the results."></label>
+      <label><span>Address</span><input id="sh-url" type="text" maxlength="300" required placeholder="https://…" autocomplete="off" spellcheck="false"></label>
+      <label><span>Method</span><select id="sh-method"><option>GET</option><option>POST</option></select></label>
+      <label><span>An example call, as JSON (optional)</span><input id="sh-example" type="text" maxlength="600" placeholder='{"symbol": "AAPL", "days": 90}' autocomplete="off" spellcheck="false"></label>
+      <div class="row"><button class="pill" id="sh-go">List it</button></div>
+      <p class="err" id="sh-ferr" role="alert"></p>
+    </form>
+    <p class="note">How paid tools work, their limits and what a customer is shown: <a href="/docs#paid-tools">the docs</a>.</p>
+  </section>
+</main>
+<script src="/app.js" defer></script>
+</body>
+</html>

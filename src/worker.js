@@ -16,6 +16,7 @@ import { getDeliver, setDeliver, telegramHook } from './deliver.js';
 import { listTemplates, makeDraft, setCopying } from './templates-api.js';
 import { reviseAgent, revisions } from './revise.js';
 import { setVerifiedOnly, tapTick } from './tap-api.js';
+import { getShelf, listTool, removeTool, shelfTick, shelfTools } from './shelf.js';
 import { lockOf } from './lock.js';
 export { Signer } from './chain.js';
 export { JobRunner } from './jobs.js';
@@ -58,7 +59,7 @@ async function waitlist(request, env) {
   return Response.json({ ok: true });
 }
 
-const PAGES = { '/create': '/create', '/floor': '/floor', '/connect': '/connect', '/docs': '/docs', '/roadmap': '/roadmap', '/security': '/security', '/factory': '/factory', '/lock': '/lock', '/pay': '/pay', '/dashboard': '/dashboard', '/inbox': '/inbox', '/job': '/job' }; // the asset layer serves x.html at /x
+const PAGES = { '/tools': '/tools', '/create': '/create', '/floor': '/floor', '/connect': '/connect', '/docs': '/docs', '/roadmap': '/roadmap', '/security': '/security', '/factory': '/factory', '/lock': '/lock', '/pay': '/pay', '/dashboard': '/dashboard', '/inbox': '/inbox', '/job': '/job' }; // the asset layer serves x.html at /x
 const open = (res) => { const h = new Headers(res.headers); h.set('access-control-allow-origin', '*'); h.set('access-control-expose-headers', 'payment-required, payment-response, x-payment-response, retry-after'); return new Response(res.body, { status: res.status, headers: h }); };
 
 // Everything the factory does. Until PRODUCT is "on" these routes answer only
@@ -69,7 +70,7 @@ async function routeProduct(request, env, ctx, url) {
   p = p.replace(/\/{2,}/g, '/').replace(/(.)\/$/, '$1').toLowerCase();
   const m = p.match(/^\/a\/(\d{1,9})(\/run)?$/);
   const rvw = p.match(/^\/api\/runs\/(0x[0-9a-f]{64})\/review$/);
-  const isProduct = p === '/api/line' || p === '/api/templates' || p === '/api/drafts' || p.startsWith('/api/agents') || p.startsWith('/api/runs/') || p === '/api/config' || p.startsWith('/api/credits') || p.startsWith('/api/subs') || p.startsWith('/api/jobs') || p.startsWith('/api/files') || p === '/api/deliver' || p === '/api/telegram/hook' || p === '/api/stripe/webhook' || p.startsWith('/api/lock/') || p.startsWith('/api/owners/') || p.startsWith('/card/') || p === '/mcp' || p === '/skill.md' || p in PAGES || m || ['/create.html', '/floor.html', '/agent.html', '/connect.html', '/docs.html', '/roadmap.html', '/security.html', '/factory.html', '/lock.html', '/pay.html', '/dashboard.html', '/inbox.html', '/job.html', '/pay.js', '/factory.js', '/vendor/three.module.min.js', '/agent', '/app.js', '/app.css'].includes(p);
+  const isProduct = p === '/api/line' || p === '/api/templates' || p === '/api/drafts' || p.startsWith('/api/shelf') || p.startsWith('/api/agents') || p.startsWith('/api/runs/') || p === '/api/config' || p.startsWith('/api/credits') || p.startsWith('/api/subs') || p.startsWith('/api/jobs') || p.startsWith('/api/files') || p === '/api/deliver' || p === '/api/telegram/hook' || p === '/api/stripe/webhook' || p.startsWith('/api/lock/') || p.startsWith('/api/owners/') || p.startsWith('/card/') || p === '/mcp' || p === '/skill.md' || p in PAGES || m || ['/create.html', '/floor.html', '/agent.html', '/connect.html', '/docs.html', '/roadmap.html', '/security.html', '/factory.html', '/lock.html', '/pay.html', '/dashboard.html', '/inbox.html', '/job.html', '/tools.html', '/pay.js', '/factory.js', '/vendor/three.module.min.js', '/agent', '/app.js', '/app.css'].includes(p);
   if (!isProduct) return null;
   // An agent's identity card is public from the moment its on-chain identity points at it.
   if (env.PRODUCT !== 'on' && !p.startsWith('/card/')) {
@@ -95,7 +96,7 @@ async function routeProduct(request, env, ctx, url) {
   if (p in PAGES) return page(PAGES[p]);
   if (m && !m[2] && request.method === 'GET') return env.FACTORY && !(await findAgent(env, m[1])) ? simple('Not found: Zero Lux', 'No unit with that number.', 404) : page('/agent');
   if (['/app.js', '/app.css', '/skill.md', '/factory.js', '/vendor/three.module.min.js'].includes(p)) return page(p);
-  if (['/create.html', '/floor.html', '/agent.html', '/connect.html', '/docs.html', '/roadmap.html', '/security.html', '/factory.html', '/lock.html', '/pay.html', '/dashboard.html', '/inbox.html', '/job.html'].includes(p)) return simple('Not found: Zero Lux', 'Nothing at this address.', 404);
+  if (['/create.html', '/floor.html', '/agent.html', '/connect.html', '/docs.html', '/roadmap.html', '/security.html', '/factory.html', '/lock.html', '/pay.html', '/dashboard.html', '/inbox.html', '/job.html', '/tools.html'].includes(p)) return simple('Not found: Zero Lux', 'Nothing at this address.', 404);
   if (!env.FACTORY || !env.OPERATOR_KEY || !env.RPC_URL) return json({ error: 'The factory is not switched on yet.' }, 503);
   try {
     if (p === '/api/config') return config(env);
@@ -131,9 +132,13 @@ async function routeProduct(request, env, ctx, url) {
     if (p.startsWith('/api/owners/')) return request.method === 'GET' ? open(await ownerBoard(env, p.slice(12))) : new Response(null, { status: 405, headers: { allow: 'GET' } });
     if (p === '/api/line') return request.method === 'POST' ? line(request, env) : new Response(null, { status: 405 });
     // Templates, starting from another agent, and changing a draft's wording before it is built.
+    // The tool shelf (src/shelf.js): paid tools anyone can list and any builder can give to an agent.
+    if (p === '/api/shelf') return request.method === 'POST' ? listTool(request, env) : open(await getShelf(env));
+    const sh = p.match(/^\/api\/shelf\/([0-9a-f]{16})\/remove$/);
+    if (sh) return request.method === 'POST' ? removeTool(request, env, sh[1]) : new Response(null, { status: 405, headers: { allow: 'POST' } });
     if (p === '/api/templates') return request.method === 'GET' ? open(listTemplates(env)) : new Response(null, { status: 405, headers: { allow: 'GET' } });
     if (p === '/api/drafts') return request.method === 'POST' ? makeDraft(request, env) : new Response(null, { status: 405, headers: { allow: 'POST' } });
-    if (p === '/api/agents') return request.method === 'POST' ? createAgent(request, env) : open(await listAgents(env));
+    if (p === '/api/agents') return request.method === 'POST' ? createAgent(request, env, { shelfTools }) : open(await listAgents(env));
     const feat = p.match(/^\/api\/agents\/(\d{1,9})\/feature$/);
     if (feat) {
       if (request.method !== 'POST') return json({ error: 'POST {"tx": "0x..."} with the hash of a $LUX burn to feature this agent.' }, 405, { allow: 'POST' });
@@ -206,6 +211,7 @@ export default {
     if (env.FACTORY) ctx.waitUntil(jobsTick(env).catch((e) => console.error('long jobs failed', e?.name)));
     if (env.FACTORY) ctx.waitUntil(filesTick(env).catch(() => {}));
     if (env.FACTORY) ctx.waitUntil(tapTick(env).catch(() => {}));
+    if (env.FACTORY) ctx.waitUntil(shelfTick(env).catch(() => {}));
   },
 
   async fetch(request, env, ctx) {

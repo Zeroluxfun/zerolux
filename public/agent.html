@@ -206,7 +206,8 @@
               <p class="lbl">Paid tools</p>
               <p class="note">Give this unit a tool that charges per call over x402, such as a data feed or a backtest. No key is needed: each call is paid in USDG out of that run's budget, up to the most you set here, and is part of the run's cost on its receipt. At most 4 paid calls a run. A payment that was sent is charged even if the tool then fails, so only add tools you trust, and price your unit to cover them.</p>
               <div id="e-paid" class="stack"></div>
-              <div class="row"><button type="button" class="pill quiet sm" id="e-addpaid">Add a paid tool</button></div>
+              <div class="row"><button type="button" class="pill quiet sm" id="e-addpaid">Add a paid tool</button><button type="button" class="pill quiet sm" id="e-shelfgo">Add from the shelf</button></div>
+              <div class="chips" id="e-shelf"></div>
             </div>
             <label><span>Price per call, in dollars</span><input id="e-price" type="number" step="0.01" min="0.01" max="2" required></label>
             <p class="note" id="e-min"></p>

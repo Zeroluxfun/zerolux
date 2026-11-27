@@ -78,6 +78,11 @@ h1{font-size:clamp(34px,min(5.6vw,9vh),84px)}
         <p class="lbl" style="margin-top:16px">Its tools: tap to add or remove</p>
         <div class="chips" id="s-tools" style="margin-top:8px"></div>
         <p class="note" id="s-toolnote" style="margin-top:8px"></p>
+        <div id="s-paidbox" hidden>
+          <p class="lbl" style="margin-top:16px">Paid tools from <a href="/tools">the shelf</a>: tap to add</p>
+          <div class="chips" id="s-paid" style="margin-top:8px"></div>
+          <p class="note" id="s-paidnote" style="margin-top:8px"></p>
+        </div>
         <label style="display:block;margin-top:16px"><span class="lbl">Its instructions: change anything</span><textarea id="s-instr" minlength="40" maxlength="4000" form="launch" required spellcheck="true"></textarea></label>
         <p class="note" style="margin-top:8px">If you change the name or the instructions, the new wording is checked when you launch, against the same rules as a new job. You can change all of this again later from the agent's page.</p>
       </div>
